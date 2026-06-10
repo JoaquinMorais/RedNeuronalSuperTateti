@@ -1,118 +1,163 @@
 import numpy as np
 import math
+import torch
 from game import SuperTateti
-import copy
 
-C_PUCT = 1.4  # constante de exploración, 1.4 es un buen valor inicial
+C_PUCT = 1.4
 
 class MCTSNode:
     def __init__(self, game, parent=None, move=None, prior=0.0):
-        self.game   = game        # estado del juego en este nodo
-        self.parent = parent      # nodo padre
-        self.move   = move        # movimiento que llevó a este nodo (board_idx, cell_idx)
-        self.prior  = prior       # probabilidad que la red asignó a este movimiento
+        self.game   = game
+        self.parent = parent
+        self.move   = move
+        self.prior  = prior
 
-        self.children = {}        # move → MCTSNode
-        self.N = 0                # veces visitado
-        self.W = 0.0              # victorias acumuladas
+        self.children = {}  # move_flat → MCTSNode
+        self.N = 0
+        self.W = 0.0
+        
+        # Guardamos la política y los movimientos válidos
+        # pero NO creamos los hijos todavía
+        self._policy    = None
+        self._expanded  = False
 
     def is_leaf(self):
-        return len(self.children) == 0
+        return not self._expanded
 
     def ucb_score(self, parent_N):
-        """
-        UCB1: balance entre explotar (W/N) y explorar (prior * sqrt(N_padre) / N+1)
-        """
         if self.N == 0:
-            return float('inf')  # nodos no visitados tienen prioridad máxima
+            return float('inf')
         q = self.W / self.N
         u = C_PUCT * self.prior * math.sqrt(parent_N) / (1 + self.N)
         return q + u
 
     def best_child(self):
-        """Elige el hijo con mayor UCB score."""
         return max(
             self.children.values(),
-            key=lambda child: child.ucb_score(self.N)
+            key=lambda c: c.ucb_score(self.N)
         )
 
-    def expand(self, policy):
+    def expand(self, policy, valid_moves):
         """
-        Crea los nodos hijos para todos los movimientos válidos.
-        policy: array de 81 probabilidades de la red neuronal
+        Expansión lazy: solo registra qué movimientos son válidos
+        y sus probabilidades. Los nodos hijos se crean al visitarlos.
         """
-        valid_moves = self.game.get_valid_moves()
+        self._policy   = policy
+        self._expanded = True
+        
         for move_flat in range(81):
             if valid_moves[move_flat] == 1:
-                board_idx = move_flat // 9
-                cell_idx  = move_flat  % 9
-
-                new_game = self.game.clone()
-                new_game.make_move(board_idx, cell_idx)
-
+                # Crear nodo hijo con juego lazy (sin clonar todavía)
                 self.children[move_flat] = MCTSNode(
-                    game   = new_game,
+                    game   = None,  # se asigna al visitar
                     parent = self,
-                    move   = (board_idx, cell_idx),
+                    move   = (move_flat // 9, move_flat % 9),
                     prior  = policy[move_flat],
                 )
 
+    def get_or_create_game(self, move_flat):
+        """Crea el estado del juego para este nodo solo cuando se necesita."""
+        if self.game is None:
+            # Recrear desde el padre
+            board_idx, cell_idx = self.move
+            self.game = self.parent.game.clone()
+            self.game.make_move(board_idx, cell_idx)
+        return self.game
+
     def backpropagate(self, value):
-        """
-        Sube el resultado por el árbol hasta la raíz.
-        value: 1 si ganó el jugador que hizo el movimiento, -1 si perdió.
-        """
         self.N += 1
         self.W += value
         if self.parent:
-            # invertir el valor porque el padre es el jugador contrario
             self.parent.backpropagate(-value)
 
 
 class MCTS:
-    def __init__(self, net, simulations=50):
+    def __init__(self, net, simulations=50, batch_size=8):
         self.net         = net
         self.simulations = simulations
-        self.cache       = {}  # estado → (policy, value)
+        self.batch_size  = batch_size  # simulaciones en paralelo
+        self.cache       = {}
 
-    def _evaluate(self, game):
-        """Evalúa un estado con la red, usando caché si ya fue evaluado."""
-        import torch
+    def _evaluate_batch(self, games):
+        """Evalúa múltiples estados en una sola llamada a la red."""
+        # Filtrar los que ya están en caché
+        to_evaluate = []
+        keys = []
+        results = {}
         
-        state_key = game.board.tobytes() + game.small_boards.tobytes()
-        
-        if state_key not in self.cache:
-            state = torch.FloatTensor(game.get_state()).unsqueeze(0)
-            mask  = torch.FloatTensor(game.get_valid_moves()).unsqueeze(0)
+        for game in games:
+            key = game.board.tobytes() + game.small_boards.tobytes()
+            keys.append(key)
+            if key not in self.cache:
+                to_evaluate.append((key, game))
+
+        # Evaluar los que no están en caché en un solo batch
+        if to_evaluate:
+            states = torch.FloatTensor(np.array([
+                g.get_state() for _, g in to_evaluate
+            ]))
+            masks = torch.FloatTensor(np.array([
+                g.get_valid_moves() for _, g in to_evaluate
+            ]))
+            
             with torch.no_grad():
-                policy, value = self.net(state, mask)
-            self.cache[state_key] = (
-                policy.squeeze(0).numpy(),
-                value.item()
-            )
-        
-        return self.cache[state_key]
+                policies, values = self.net(states, masks)
+            
+            for i, (key, _) in enumerate(to_evaluate):
+                self.cache[key] = (
+                    policies[i].numpy(),
+                    values[i].item()
+                )
+
+        return [self.cache[k] for k in keys]
 
     def search(self, game):
-        # Limpiar caché entre búsquedas para no usar memoria infinita
         self.cache = {}
-        
         root = MCTSNode(game=game.clone())
 
-        for _ in range(self.simulations):
-            node = root
+        # Correr simulaciones en grupos de batch_size
+        sims_done = 0
+        while sims_done < self.simulations:
+            current_batch = min(self.batch_size, self.simulations - sims_done)
+            
+            # Fase SELECT: bajar por el árbol en cada simulación
+            leaves = []
+            for _ in range(current_batch):
+                node = root
+                while not node.is_leaf():
+                    node = node.best_child()
+                    node.get_or_create_game(
+                        node.move[0] * 9 + node.move[1] if node.move else 0
+                    )
+                    if node.game and node.game.winner is not None:
+                        break
+                leaves.append(node)
 
-            while not node.is_leaf() and node.game.winner is None:
-                node = node.best_child()
+            # Separar terminales de no terminales
+            terminal_leaves     = [n for n in leaves if n.game and n.game.winner is not None]
+            nonterminal_leaves  = [n for n in leaves if not (n.game and n.game.winner is not None)]
 
-            if node.game.winner is not None:
+            # Backprop de terminales
+            for node in terminal_leaves:
                 value = 0.0 if node.game.winner == 0 else -1.0
                 node.backpropagate(value)
-                continue
 
-            policy_np, value_f = self._evaluate(node.game)  # ← usa caché
-            node.expand(policy_np)
-            node.backpropagate(value_f)
+            # Evaluar no terminales en batch
+            if nonterminal_leaves:
+                games_to_eval = []
+                for node in nonterminal_leaves:
+                    g = node.game if node.game else node.get_or_create_game(0)
+                    games_to_eval.append(g)
+
+                batch_results = self._evaluate_batch(games_to_eval)
+
+                for node, (policy_np, value_f) in zip(nonterminal_leaves, batch_results):
+                    g = node.game
+                    valid_moves = g.get_valid_moves()
+                    node.expand(policy_np, valid_moves)
+                    node.backpropagate(value_f)
+
+            sims_done += current_batch
 
         visit_counts = np.zeros(81, dtype=np.float32)
         for move_flat, child in root.children.items():
@@ -125,19 +170,20 @@ class MCTS:
         return visit_counts
     
 
+# Agregá esto temporalmente al final de mcts.py para medir
 if __name__ == "__main__":
-    import torch
+    import time
     from model import SuperTatetiNet
 
     net  = SuperTatetiNet()
-    mcts = MCTS(net, simulations=50)
+    mcts = MCTS(net, simulations=50, batch_size=8)
     game = SuperTateti()
 
-    print("Corriendo MCTS...")
-    probs = mcts.search(game)
+    times = []
+    for _ in range(5):
+        start = time.time()
+        probs = mcts.search(game)
+        times.append(time.time() - start)
 
-    print("Shape:", probs.shape)           # (81,)
-    print("Sum:", probs.sum())             # ~1.0
-    print("Movimientos con visitas > 0:", (probs > 0).sum())  # varios
-    print("Movimiento más visitado:", probs.argmax())
-    print("Probabilidad más alta:", probs.max())
+    print(f"Tiempo promedio: {sum(times)/len(times):.3f}s")
+    print(f"Tiempo mínimo:   {min(times):.3f}s")

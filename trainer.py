@@ -8,6 +8,26 @@ from game import SuperTateti
 from model import SuperTatetiNet
 from mcts import MCTS
 
+
+
+import os
+from datetime import datetime
+
+# Crear carpeta logs si no existe
+os.makedirs("logs", exist_ok=True)
+
+# Nombre del archivo: log_2026-06-10_14-30.txt
+LOG_FILE = f"logs/log_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.txt"
+
+def log_print(text):
+    msg = f"{datetime.now().strftime('%Y/%m/%d-%H:%M')} - {text}"
+
+    print(text)
+
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(msg + "\n")
+
+
 class Trainer:
     def __init__(self, simulations=50):
         self.net  = SuperTatetiNet()
@@ -73,11 +93,11 @@ class Trainer:
 
     def save(self, path="model.pth"):
         torch.save(self.net.state_dict(), path)
-        print(f"Modelo guardado en {path}")
+        log_print(f"Modelo guardado en {path}")
 
     def load(self, path="model.pth"):
         self.net.load_state_dict(torch.load(path))
-        print(f"Modelo cargado desde {path}")
+        log_print(f"Modelo cargado desde {path}")
 
     def train(self, iterations=100, games_per_iter=10, batch_size=64):
         for i in range(iterations):
@@ -94,17 +114,25 @@ class Trainer:
 
             if loss_info:
                 loss, vloss, ploss = loss_info
-                print(
+                log_print(
                     f"Iter {i+1:>4}/{iterations} | "
                     f"X:{wins_x} O:{wins_o} ={draws} | "
                     f"Loss={loss:.4f} (V={vloss:.4f} P={ploss:.4f})"
                 )
             else:
-                print(f"Iter {i+1:>4}/{iterations} | Acumulando experiencias...")
+                log_print(f"Iter {i+1:>4}/{iterations} | Acumulando experiencias...")
+
+            # Guardar cada 100 iteraciones
+            if (i + 1) % 100 == 0:
+                self.save(f"checkpoint_{i+1}.pth")
 
         self.save()
 
 
 if __name__ == "__main__":
     trainer = Trainer(simulations=50)
-    trainer.train(iterations=50, games_per_iter=10, batch_size=64)
+    import os
+    if os.path.exists("model.pth"):
+        trainer.load("model.pth")
+        log_print("Continuando entrenamiento desde model.pth")
+    trainer.train(iterations=1920, games_per_iter=10, batch_size=64)

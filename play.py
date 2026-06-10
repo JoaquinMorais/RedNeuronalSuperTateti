@@ -81,7 +81,10 @@ def get_human_move(game):
     
     while True:
         try:
-            board_idx = int(input("Tablero (0-8): "))
+            if not game.active_board:
+                board_idx = int(input("Tablero (0-8): "))
+            else:
+                board_idx = game.active_board
             cell_idx  = int(input("Casilla (0-8): "))
             
             move_flat = board_idx * 9 + cell_idx
