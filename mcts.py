@@ -175,15 +175,19 @@ if __name__ == "__main__":
     import time
     from model import SuperTatetiNet
 
-    net  = SuperTatetiNet()
-    mcts = MCTS(net, simulations=50, batch_size=8)
+    net = SuperTatetiNet()
     game = SuperTateti()
 
-    times = []
-    for _ in range(5):
-        start = time.time()
-        probs = mcts.search(game)
-        times.append(time.time() - start)
-
-    print(f"Tiempo promedio: {sum(times)/len(times):.3f}s")
-    print(f"Tiempo mínimo:   {min(times):.3f}s")
+    for sims in [50, 100, 200, 400]:
+        mcts = MCTS(net, simulations=sims, batch_size=8)
+        times = []
+        for _ in range(3):
+            start = time.time()
+            probs = mcts.search(game)
+            times.append(time.time() - start)
+        avg = sum(times) / len(times)
+        # Una partida dura ~50 turnos
+        partida = avg * 50
+        # Con 8hs disponibles
+        partidas_8hs = int(8 * 3600 / partida)
+        print(f"sims={sims:>4} | {avg:.3f}s/búsqueda | {partida:.1f}s/partida | {partidas_8hs} partidas en 8hs")

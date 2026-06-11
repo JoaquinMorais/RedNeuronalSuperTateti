@@ -46,7 +46,8 @@ def play_game(ai_x, ai_o):
 
 
 def evaluate(model_a, model_b, games=10):
-
+    print(f'Modelo A {model_a}')
+    print(f'Modelo B {model_b}')
     ai_a = load_ai(model_a)
     ai_b = load_ai(model_b)
 
@@ -101,7 +102,8 @@ def evaluate(model_a, model_b, games=10):
 if __name__ == "__main__":
 
     evaluate(
+        "model.pth",
         "training/9-6/checkpoint_100.pth",
-        "training/9-6/checkpoint_1900.pth",
-        games=1000
+        
+        games=500
     )
