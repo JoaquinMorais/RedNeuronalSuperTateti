@@ -88,7 +88,12 @@ def test_siguiente_generacion_7_mas_13(reference_season):
         assert ch["origin_season"] == 2 and ch["model_sha256"] != par["model_sha256"]
         assert modelstore.weights_hash(modelstore.load_state_dict(e.models / par["model_file"])) == par["model_sha256"]
         assert (e.models / ch["model_file"]).exists()
-    assert len({p["parent_id"] for p in plan[7:]}) >= 2
+    # Criterio por puesto de la tabla anual: 1.º 5 hijos, 2.º 3, 3.º 2, 4.º 2, 5.º 1, 6.º y 7.º ninguno
+    by_rank = [r["individual_id"] for r in e.q("SELECT individual_id FROM season_participants ORDER BY final_position")]
+    kids = {}
+    for p in plan[7:]:
+        kids[p["parent_id"]] = kids.get(p["parent_id"], 0) + 1
+    assert [kids.get(i, 0) for i in by_rank] == [5, 3, 2, 2, 1] + [0] * 15
     hb = e.q("SELECT * FROM historical_best")[0]
     assert (e.models / hb["model_file"]).exists()
 

@@ -86,17 +86,26 @@ def test_niveles_de_mutacion_ordenados_por_magnitud():
     assert dist[0] < dist[1] < dist[2]
 
 
-def test_padres_exactamente_13_y_reglas():
-    ranked = [f"#{i:06x}" for i in range(20)]
-    totals = {c: 40 - 2 * i for i, c in enumerate(ranked)}
-    surv = set(ranked[:7])
-    for seed in range(50):
-        p = mutation.select_parents(ranked, totals, surv, random.Random(seed), 2.0, 1e-6, 5, 2)
-        assert len(p) == 13 and max(Counter(p).values()) <= 5
-        assert sum(1 for x in p if x not in surv) >= 2
-    # mejor puntuación => más descendencia (promedio)
-    cnt = Counter(x for s in range(300) for x in mutation.select_parents(ranked, totals, surv, random.Random(s), 2.0, 1e-6, 5, 2))
-    assert cnt[ranked[0]] > cnt[ranked[6]] > cnt[ranked[15]]
+def test_padres_segun_tabla_anual():
+    ranked = [f"#{i:06x}" for i in range(20)]            # ranked[0] = 1.º de la tabla anual
+    p = mutation.parents_by_rank(ranked, (5, 3, 2, 2, 1, 0, 0))
+    assert len(p) == 13
+    assert Counter(p) == {ranked[0]: 5, ranked[1]: 3, ranked[2]: 2, ranked[3]: 2, ranked[4]: 1}
+    assert ranked[5] not in p and ranked[6] not in p and not any(x in p for x in ranked[7:])  # 8.º, 9.º... jamás
+    assert p == mutation.parents_by_rank(ranked, (5, 3, 2, 2, 1, 0, 0))                       # determinista
+    with pytest.raises(ValueError):
+        mutation.parents_by_rank(ranked, (5, 3, 2, 2, 0, 0, 0))                              # no suma 13
+
+
+def test_politica_de_hijos_configurable_y_validada():
+    assert load_config({}).parent_policy.children_per_rank == (5, 3, 2, 2, 1, 0, 0)
+    import json, tempfile
+    f = Path(tempfile.mkdtemp()) / "c.json"
+    f.write_text(json.dumps({"parent_policy": {"children_per_rank": [4, 3, 2, 2, 1, 1, 0]}}))
+    assert load_config({"EVO_CONFIG_FILE": str(f)}).parent_policy.children_per_rank == (4, 3, 2, 2, 1, 1, 0)
+    f.write_text(json.dumps({"parent_policy": {"children_per_rank": [4, 3, 2, 2, 1, 0, 0]}}))
+    with pytest.raises(ValueError):
+        load_config({"EVO_CONFIG_FILE": str(f)})
 
 
 # ---------------- calendarios ----------------

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from . import competitions as comp
-from . import evolve, modelstore, repo, rules
+from . import evolve, modelstore, repo, reports, rules
 from .config import Config
 from .db import Database
 from .display import ROUND_NAME, Display
@@ -113,6 +113,7 @@ class Trainer:
         info = self.db.run(lambda c: comp.load_season_info(c, season_row))
         self._load_nets(info)
         season = self.db.run(lambda c: c.execute("SELECT * FROM seasons WHERE id=%s", (info.id,)).fetchone())
+        self.out.titles = self.db.run(lambda c: reports.titles_through(c, info.number - 1))  # campeones de temporadas anteriores
         prog = self.db.run(lambda c: comp.progress(c, info.id))
         self.out.header(season=season, master_seed=master, cfg=self.cfg, resumed=resumed, progress=prog,
                         db_status=self._db_status())
@@ -164,6 +165,7 @@ class Trainer:
         repo.materialize_models(self.db, self.cfg)  # escribe los archivos de los 13 descendientes
         hist = evolve.record_historical_best(self.db, self.cfg, info)
         self.db.run(lambda c: evolve.complete_season(c, info))
+        self.out.titles = self.db.run(lambda c: reports.titles_through(c, info.number))  # ya incluye a los campeones de esta temporada
         self.out.final_report(self._final_report_data(info, hist))
 
     # -- fechas ---------------------------------------------------------

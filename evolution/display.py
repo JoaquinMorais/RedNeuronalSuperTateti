@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 
 from . import colors as colormod
+from . import titles as titlemod
 
 RESET = "\x1b[0m"
 BOLD = "\x1b[1m"
@@ -34,6 +35,8 @@ class Display:
     def __init__(self, color: bool = False, stream=None):
         self.color = color
         self.stream = stream or sys.stdout
+        # {color: {"L": [...], "C": [...], "RC": [...]}}: IA que ya ganaron algo (ver titles.py)
+        self.titles: dict = {}
 
     def emit(self, text: str = "") -> None:
         try:
@@ -42,11 +45,32 @@ class Display:
             print(text.encode("ascii", "replace").decode(), file=self.stream, flush=True)
 
     # -- estilo ----------------------------------------------------------
-    def ia(self, hex_color: str, suffix: str = "") -> str:
+    def tag(self, hex_color: str, badge: bool = True) -> str:
+        """Texto visible de una IA: '#7d48e6' o '#7d48e6:01L:00C:00RC' si ya ganó algo."""
+        return hex_color + (titlemod.badge(self.titles.get(hex_color)) if badge else "")
+
+    def paint(self, text: str, hex_color: str) -> str:
         if not self.color:
-            return f"{hex_color}{suffix}"
+            return text
         r, g, b = colormod.to_rgb(hex_color)
-        return f"\x1b[38;2;{r};{g};{b}m■ {hex_color}{suffix}{RESET}"
+        return f"\x1b[38;2;{r};{g};{b}m{text}{RESET}"
+
+    def ia(self, hex_color: str, suffix: str = "", badge: bool = True) -> str:
+        t = self.tag(hex_color, badge)
+        if not self.color:
+            return f"{t}{suffix}"
+        return self.paint(f"■ {t}{suffix}", hex_color)
+
+    def id_width(self) -> int:
+        """Ancho de la columna 'IA' en las tablas (con insignia si alguien tiene títulos)."""
+        longest = max((len(titlemod.badge(t)) for t in self.titles.values()), default=0)
+        return 7 + longest
+
+    def cell(self, hex_color: str, width: int | None = None, badge: bool = True) -> str:
+        """``ia`` rellenada hasta ``width`` columnas VISIBLES (los códigos ANSI no cuentan)."""
+        width = self.id_width() if width is None else width
+        visible = len(self.tag(hex_color, badge)) + (2 if self.color else 0)
+        return self.ia(hex_color, badge=badge) + " " * max(0, width - visible)
 
     def bold(self, t: str) -> str:
         return f"{BOLD}{t}{RESET}" if self.color else t
@@ -73,9 +97,10 @@ class Display:
     # -- tablas ----------------------------------------------------------
     def league_table(self, rows: list[dict], md: int) -> None:
         self.section(f"Tabla de Liga tras la fecha {md}")
-        self.emit(f"  {'Pos':>3}  {'IA':<10} {'PJ':>3} {'G':>3} {'E':>3} {'P':>3} {'Pts':>4}")
+        w = self.id_width() + (2 if self.color else 0)
+        self.emit(f"  {'Pos':>3}  {'IA':<{w}} {'PJ':>3} {'G':>3} {'E':>3} {'P':>3} {'Pts':>4}")
         for r in rows:
-            self.emit(f"  {r['position']:>3}  {self.ia(r['color'], ''):<10} {r['played']:>3} {r['wins']:>3} "
+            self.emit(f"  {r['position']:>3}  {self.cell(r['color'], w)} {r['played']:>3} {r['wins']:>3} "
                       f"{r['draws']:>3} {r['losses']:>3} {r['points']:>4}")
 
     def event(self, ev: dict) -> None:
@@ -135,17 +160,18 @@ class Display:
     def final_report(self, d: dict) -> None:
         self.banner(f"FIN DE LA TEMPORADA {d['number']}")
         self.section("Tabla final de Liga")
-        self.emit(f"  {'Pos':>3}  {'IA':<10} {'Pts partido':>11}  {'Puntos evol.':>12}")
+        w = self.id_width() + (2 if self.color else 0)
+        self.emit(f"  {'Pos':>3}  {'IA':<{w}} {'Pts partido':>11}  {'Puntos evol.':>12}")
         for r in d["league"]:
-            self.emit(f"  {r['league_position']:>3}  {self.ia(r['color']):<10} {r['league_points']:>11}  {r['league_score']:>12}")
+            self.emit(f"  {r['league_position']:>3}  {self.cell(r['color'], w)} {r['league_points']:>11}  {r['league_score']:>12}")
         self.section("Copa")
         self.emit(f"  Campeón: {self.ia(d['cup_champion'])}   Subcampeón: {self.ia(d['cup_runner_up'])}")
         self.section("Recopa")
         self.emit(f"  Campeón: {self.ia(d['recopa_champion'])}")
         self.section("Clasificación global (Copa + Liga + Recopa)")
-        self.emit(f"  {'Pos':>3}  {'IA':<10} {'Copa':>5} {'Liga':>5} {'Recopa':>7} {'TOTAL':>6}")
+        self.emit(f"  {'Pos':>3}  {'IA':<{w}} {'Copa':>5} {'Liga':>5} {'Recopa':>7} {'TOTAL':>6}")
         for r in d["global"]:
-            self.emit(f"  {r['final_position']:>3}  {self.ia(r['color']):<10} {r['cup_score']:>5} {r['league_score']:>5} "
+            self.emit(f"  {r['final_position']:>3}  {self.cell(r['color'], w)} {r['cup_score']:>5} {r['league_score']:>5} "
                       f"{r['recopa_score']:>7} {r['total_score']:>6}")
         self.section("Siguiente generación")
         self.emit("  Se conservan intactas (7): " + ", ".join(self.ia(c) for c in d["survivors"]))

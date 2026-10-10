@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .colors import DEFAULT_TIERS, ColorTier
+from .rules import CHILDREN, POPULATION
 
 
 @dataclass(frozen=True)
@@ -29,11 +30,12 @@ DEFAULT_LEVEL_PROBS = {"small": 0.50, "medium": 0.35, "large": 0.15}
 
 @dataclass(frozen=True)
 class ParentPolicy:
-    """Selección de padres para los 13 descendientes."""
-    power: float = 2.0                 # peso = max(puntos_totales, 0) ** power
-    min_weight: float = 1e-6           # evita pesos 0 (siempre factible completar 13)
-    max_children_per_parent: int = 5
-    min_children_from_non_survivors: int = 2  # descendencia de IA fuera del top 7
+    """Hijos por puesto de la TABLA ANUAL (Copa + Liga + Recopa); el primer valor es el 1.º.
+
+    Por defecto: 1.º 5 hijos, 2.º 3, 3.º 2, 4.º 2, 5.º 1, 6.º y 7.º ninguno (suman 13).
+    Los 7 primeros siempre se conservan intactos. Debe sumar exactamente 13.
+    """
+    children_per_rank: tuple = (5, 3, 2, 2, 1, 0, 0)
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,7 @@ class Config:
             "level_probs": self.level_probs,
             "mutate_value_head": self.mutate_value_head,
             "color_tiers": {k: vars(v) for k, v in self.color_tiers.items()},
-            "parent_policy": vars(self.parent_policy),
+            "parent_policy": {"children_per_rank": list(self.parent_policy.children_per_rank)},
         }
 
 
@@ -102,7 +104,7 @@ def load_config(env: dict | None = None) -> Config:
         if "color_tiers" in data:
             kw["color_tiers"] = {**DEFAULT_TIERS, **{k: ColorTier(**v) for k, v in data["color_tiers"].items()}}
         if "parent_policy" in data:
-            kw["parent_policy"] = ParentPolicy(**data["parent_policy"])
+            kw["parent_policy"] = ParentPolicy(children_per_rank=tuple(data["parent_policy"]["children_per_rank"]))
     # Atajo por variable de entorno para la distribución de niveles: "small:0.5,medium:0.35,large:0.15"
     if env.get("MUTATION_PROBS"):
         kw["level_probs"] = {k: float(v) for k, v in (p.split(":") for p in env["MUTATION_PROBS"].split(","))}
@@ -116,5 +118,8 @@ def _validate(cfg: Config) -> None:
         raise ValueError("level_probs debe tener small/medium/large y sumar 1")
     if set(cfg.mutation_levels) != {"small", "medium", "large"}:
         raise ValueError("mutation_levels debe definir small/medium/large")
+    cpr = cfg.parent_policy.children_per_rank
+    if (not all(isinstance(n, int) and n >= 0 for n in cpr) or len(cpr) > POPULATION or sum(cpr) != CHILDREN):
+        raise ValueError(f"parent_policy.children_per_rank debe sumar exactamente {CHILDREN} (recibido {list(cpr)})")
     if cfg.initial_population not in ("auto", "seed", "random"):
         raise ValueError("INITIAL_POPULATION debe ser auto, seed o random")

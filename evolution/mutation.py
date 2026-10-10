@@ -41,52 +41,15 @@ def pick_level(probs: dict[str, float], rng: random.Random) -> str:
     return "large"
 
 
-def select_parents(
-    ranked: list[str],
-    totals: dict[str, int],
-    survivors: set[str],
-    rng: random.Random,
-    power: float,
-    min_weight: float,
-    max_per_parent: int,
-    min_from_non_survivors: int,
-    n_children: int = CHILDREN,
-) -> list[str]:
-    """Elige exactamente ``n_children`` padres (con repetición, tope por padre).
+def parents_by_rank(ranked: list[str], children_per_rank, n_children: int = CHILDREN) -> list[str]:
+    """Padre de cada descendiente según el puesto en la tabla anual (``ranked``: 1.º primero).
 
-    Probabilidad proporcional a max(puntos_totales,0)**power. Se garantizan al menos
-    ``min_from_non_survivors`` hijos de IA que NO están entre los supervivientes, para
-    que la descendencia no sea exclusiva del top conservado.
-    ``ranked`` es la clasificación final (mejor primero) y fija el orden canónico.
+    Con el criterio por defecto (5, 3, 2, 2, 1, 0, 0): el 1.º tiene 5 hijos, el 2.º 3, etc.
+    Es determinista (sin azar) y siempre devuelve exactamente ``n_children`` padres.
     """
-    weight = {p: max(totals[p], 0) ** power + min_weight for p in ranked}
-    counts = {p: 0 for p in ranked}
-    chosen: list[str] = []
-
-    def draw(pool: list[str]) -> str | None:
-        pool = [p for p in pool if counts[p] < max_per_parent]
-        if not pool:
-            return None
-        total = sum(weight[p] for p in pool)
-        r = rng.random() * total
-        acc = 0.0
-        for p in pool:
-            acc += weight[p]
-            if r < acc:
-                return p
-        return pool[-1]
-
-    outsiders = [p for p in ranked if p not in survivors]
-    for _ in range(min(min_from_non_survivors, n_children)):
-        p = draw(outsiders)
-        if p is None:
-            break
-        counts[p] += 1
-        chosen.append(p)
-    while len(chosen) < n_children:
-        p = draw(ranked)
-        if p is None:
-            raise ValueError("No hay capacidad para asignar los descendientes")
-        counts[p] += 1
-        chosen.append(p)
-    return chosen
+    parents: list[str] = []
+    for color, n in zip(ranked, children_per_rank):
+        parents += [color] * n
+    if len(parents) != n_children:
+        raise ValueError(f"La política produce {len(parents)} descendientes y debe producir {n_children}")
+    return parents

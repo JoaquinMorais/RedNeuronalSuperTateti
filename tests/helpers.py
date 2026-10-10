@@ -44,6 +44,10 @@ class Env:
         self.admin.execute(f'SET search_path TO "{self.schema}"')
         return self.admin.execute(sql, params).fetchall()
 
+    def conn(self):
+        self.admin.execute(f'SET search_path TO "{self.schema}"')
+        return self.admin
+
     def close(self):
         self.admin.execute(f'DROP SCHEMA "{self.schema}" CASCADE')
         self.admin.close()

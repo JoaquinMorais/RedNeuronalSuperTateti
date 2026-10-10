@@ -32,6 +32,13 @@ docker compose up -d trainer               # reanudar exactamente donde quedó
 docker compose run --rm trainer python -m evolution status   # estado de las temporadas
 docker compose down                        # apaga; los datos persisten (volumen pgdata y ./models)
 docker compose down -v                     # ¡borra la base de datos!
+rm -f models/??????.pth models/??????.json && rm -rf models/historical  # ¡borra los modelos!
+
+docker compose run --rm trainer python -m evolution status      # temporadas + campeones
+docker compose run --rm trainer python -m evolution season 1    # análisis a fondo de la temporada 1
+docker compose run --rm trainer python -m evolution champions   # campeones por temporada + ranking
+docker compose run --rm trainer python -m evolution menu        # menú interactivo con lo anterior
+
 ```
 Variables útiles (en `.env` o `docker compose run -e ...`): `SEED`, `MAX_SEASONS` (0 = sin límite), `INITIAL_POPULATION` (`auto|seed|random`), `MUTATION_PROBS=small:0.5,medium:0.35,large:0.15`, `EVO_CONFIG_FILE` (ver `evo_config.example.json`), `NO_COLOR`/`FORCE_COLOR`.
 Una sola temporada: `MAX_SEASONS=1 docker compose up trainer`. Con `docker compose run -it` o `tty: true` se ven colores reales; sin terminal sale texto plano legible.

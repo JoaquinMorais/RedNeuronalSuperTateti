@@ -25,14 +25,10 @@ def plan_evolution(conn, cfg: Config, s: SeasonInfo) -> list[dict]:
     rows = conn.execute("SELECT individual_id, total_score, final_position FROM season_participants "
                         "WHERE season_id=%s ORDER BY final_position", (s.id,)).fetchall()
     ranked = [s.color_of[r["individual_id"]] for r in rows]
-    totals = {s.color_of[r["individual_id"]]: r["total_score"] for r in rows}
     survivors = ranked[:rules.SURVIVORS]
 
-    pol = cfg.parent_policy
-    parents = mutation.select_parents(
-        ranked, totals, set(survivors), derive_rng(s.seed, "parents"),
-        pol.power, pol.min_weight, pol.max_children_per_parent, pol.min_children_from_non_survivors)
-    parents.sort(key=ranked.index)  # orden estable: del mejor padre al peor
+    # Padres según la tabla anual: puesto 1 -> 5 hijos, puesto 2 -> 3, ... (ver ParentPolicy)
+    parents = mutation.parents_by_rank(ranked, cfg.parent_policy.children_per_rank)
 
     for pos, c in enumerate(survivors, start=1):
         conn.execute("INSERT INTO evolution_plan (season_id, position, role, individual_id) VALUES (%s,%s,'survivor',%s)",
