@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tateti
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tateti}
+      POSTGRES_DB: tateti
+    volumes:
+      - pgdata:/var/lib/postgresql/data      # la base de datos sobrevive a down/up
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tateti -d tateti"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  trainer:
+    build: .
+    init: true                                # tini: reenvío de señales y cosecha de procesos
+    stop_grace_period: 30s                    # tiempo para terminar la partida en curso y cerrar limpio
+    tty: true                                 # colores reales en `docker compose up`/`logs` (sin tty se ve en texto plano)
+    restart: on-failure                       # si falla, reanuda desde la base de datos
+    depends_on:
+      db:
+        condition: service_healthy            # no arranca hasta que PostgreSQL acepta conexiones
+    environment:
+      DATABASE_URL: postgresql://tateti:${POSTGRES_PASSWORD:-tateti}@db:5432/tateti
+      MODELS_DIR: /app/models
+      SEED_MODEL_PATH: /seed/model.pth
+      INITIAL_POPULATION: ${INITIAL_POPULATION:-auto}   # auto | seed | random
+      SEED: ${SEED:-}                         # vacío = aleatoria (se guarda en la BD)
+      MAX_SEASONS: ${MAX_SEASONS:-0}          # 0 = sin límite
+      # MUTATION_PROBS: small:0.5,medium:0.35,large:0.15
+      # EVO_CONFIG_FILE: /app/evo_config.json
+      # NO_COLOR: 1
+    volumes:
+      - ./models:/app/models                  # volumen persistente de modelos (visible en el host)
+      - ./model.pth:/seed/model.pth:ro        # red ya entrenada que siembra la 1.ª generación
+
+volumes:
+  pgdata:

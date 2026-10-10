@@ -1,7 +1,0 @@
-2026/06/10-18:40 - Modelo cargado desde model.pth
-2026/06/10-19:16 - Modelo guardado en checkpoint_100.pth
-2026/06/10-19:49 - Modelo guardado en checkpoint_200.pth
-2026/06/10-20:38 - Modelo guardado en checkpoint_300.pth
-2026/06/10-21:25 - Modelo guardado en checkpoint_400.pth
-2026/06/10-21:56 - Modelo guardado en checkpoint_500.pth
-2026/06/10-21:56 - Modelo guardado en model.pth

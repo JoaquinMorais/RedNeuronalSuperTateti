@@ -1,0 +1,4 @@
+# torch se instala aparte en el Dockerfile (rueda CPU); localmente: pip install torch
+numpy>=1.26
+psycopg[binary]>=3.1
+pytest>=8

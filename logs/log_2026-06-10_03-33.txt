@@ -1,4 +1,0 @@
-Modelo cargado desde model.pth
-Continuando entrenamiento desde model.pth
-Iter    1/1 | X:3 O:6 =1 | Loss=2.6242 (V=0.8887 P=1.7354)
-Modelo guardado en model.pth

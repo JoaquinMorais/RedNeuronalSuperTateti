@@ -1,4 +1,0 @@
-2026-06-10_03-34 - Modelo cargado desde model.pth
-2026-06-10_03-34 - Continuando entrenamiento desde model.pth
-2026-06-10_03-34 - Iter    1/1 | X:2 O:5 =3 | Loss=2.4994 (V=0.6897 P=1.8097)
-2026-06-10_03-34 - Modelo guardado en model.pth
