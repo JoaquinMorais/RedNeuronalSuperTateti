@@ -89,7 +89,7 @@ def test_vista_de_temporada(reference_season, conn):
     for h in ("Octavos", "Cuartos", "Semifinales", "Final", "CAMPEÓN"):
         assert h in txt
     # el campeón de Copa aparece en el cuadro y en la línea de campeón
-    assert re.search(re.escape(color[season["cup_champion_id"]]) + r"(:\d\dL:\d\dC:\d\dRC)? CAMPEÓN", txt)
+    assert re.search(re.escape(color[season["cup_champion_id"]]) + r"(:\d\dL:\d\dC:\d\dRC)?\*? CAMPEÓN", txt)
     # la Copa (grupos y cuadro) muestra las insignias de las IA que ya son campeonas
     copa = txt.split("--- Copa ---")[1].split("--- Recopa ---")[0]
     for key in ("league_champion_id", "cup_champion_id"):

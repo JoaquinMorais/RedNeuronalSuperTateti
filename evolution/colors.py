@@ -5,6 +5,7 @@ semejanza genética. El linaje real se guarda con una referencia explícita al p
 """
 from __future__ import annotations
 
+import colorsys
 import random
 import re
 from dataclasses import dataclass, field
@@ -57,6 +58,32 @@ def random_color(rng: random.Random, taken: set[str]) -> ColorResult:
         if c not in taken:
             return ColorResult(c, {"strategy": "random", "attempts": attempt})
     return _scan_free(rng.choice(sorted(taken)) if taken else "#808080", taken, "random_exhausted")
+
+
+def spread_colors(n: int, rng: random.Random, taken: set[str]) -> list[ColorResult]:
+    """``n`` colores de la población inicial repartidos por TODO el círculo cromático.
+
+    Cada color tiene un matiz propio (separados 360/n grados, con un pequeño desvío) y
+    saturación/brillo altos, así las IA de la primera generación se distinguen a simple
+    vista y ninguna es demasiado oscura para verse en una terminal con fondo negro.
+    Los descendientes luego se parecen a su padre (``mutate_color``): cada familia conserva su tono.
+    """
+    offset = rng.random()
+    used = set(taken)
+    out: list[ColorResult] = []
+    for k in range(n):
+        for attempt in range(1, 1000):
+            hue = (offset + (k + rng.uniform(-0.2, 0.2)) / n) % 1.0
+            r, g, b = colorsys.hsv_to_rgb(hue, rng.uniform(0.55, 0.95), rng.uniform(0.70, 1.0))
+            c = to_hex(round(v * 255) for v in (r, g, b))
+            if c not in used:
+                used.add(c)
+                out.append(ColorResult(c, {"strategy": "spread", "slot": k, "of": n, "attempts": attempt}))
+                break
+        else:  # no debería ocurrir: espacio casi agotado
+            out.append(random_color(rng, used))
+            used.add(out[-1].color)
+    return out
 
 
 def _try_variation(parent: tuple[int, int, int], tier: ColorTier, rng: random.Random):

@@ -33,6 +33,19 @@ def test_colores_formato_y_unicidad():
     assert len(taken) == 300
 
 
+def test_colores_iniciales_repartidos_y_visibles():
+    import colorsys
+    for seed in range(20):
+        res = C.spread_colors(20, random.Random(seed), {"#808080"})
+        cols = [r.color for r in res]
+        assert len(set(cols)) == 20 and "#808080" not in cols and all(C.is_valid_hex(c) for c in cols)
+        hues = sorted(colorsys.rgb_to_hsv(*(v / 255 for v in C.to_rgb(c)))[0] for c in cols)
+        gaps = [(hues[(i + 1) % 20] - hues[i]) % 1.0 for i in range(20)]
+        assert max(gaps) < 0.12                                    # recorren todo el círculo cromático
+        assert all(max(C.to_rgb(c)) >= 0.65 * 255 for c in cols)   # ninguno demasiado oscuro para una terminal
+    assert [r.color for r in C.spread_colors(20, random.Random(3), set())] == [r.color for r in C.spread_colors(20, random.Random(3), set())]
+
+
 @pytest.mark.parametrize("level,lo,hi", [("small", 1, 3), ("medium", 4, 24), ("large", 25, 80)])
 def test_mutacion_de_color_respeta_magnitud(level, lo, hi):
     rng, taken = random.Random(3), {"#808080"}

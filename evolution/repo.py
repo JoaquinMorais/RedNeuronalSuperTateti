@@ -65,31 +65,29 @@ def bootstrap_population(conn, cfg: Config, master_seed: int, seed_hash: str | N
     use_seed = cfg.initial_population == "seed" or (cfg.initial_population == "auto" and seed_hash is not None)
     if use_seed and seed_hash is None:
         raise FileNotFoundError(f"INITIAL_POPULATION=seed pero no existe {cfg.seed_model_path}")
+    # Colores de la generación inicial: repartidos por todo el círculo cromático para distinguirse a simple vista
+    palette = colormod.spread_colors(rules.POPULATION, derive_rng(master_seed, "founder_colors"), taken)
     if use_seed:
-        c = colormod.random_color(derive_rng(master_seed, "founder", 0), taken)
-        taken.add(c.color)
+        c = palette[0]
         founder = insert_individual(
             conn, color=c.color, origin_season=1, parent_id=None, kind="founder_seed",
             mutation_meta={"source": str(cfg.seed_model_path), "source_weights_sha256": seed_hash},
             color_meta=c.meta)
         ids.append(founder)
-        # 19 descendientes mutados del fundador (el fundador queda intacto)
+        # 19 descendientes mutados del fundador (el fundador queda intacto). El linaje es el parent_id;
+        # el color de la generación inicial NO imita al del fundador: así se distinguen.
         for k in range(1, rules.POPULATION):
             seed = derive_seed(master_seed, "founder_child", k)
             level = mutation.pick_level(cfg.level_probs, derive_rng(seed, "level"))
-            cc = colormod.mutate_color(c.color, level, derive_rng(seed, "color"), taken, cfg.color_tiers)
-            taken.add(cc.color)
             ids.append(insert_individual(
-                conn, color=cc.color, origin_season=1, parent_id=founder, kind="mutant", level=level,
-                seed=seed, mutation_meta=mutation_meta_for(cfg, level), color_meta=cc.meta))
+                conn, color=palette[k].color, origin_season=1, parent_id=founder, kind="mutant", level=level,
+                seed=seed, mutation_meta=mutation_meta_for(cfg, level), color_meta=palette[k].meta))
     else:
         for k in range(rules.POPULATION):
             seed = derive_seed(master_seed, "founder_random", k)
-            c = colormod.random_color(derive_rng(seed, "color"), taken)
-            taken.add(c.color)
             ids.append(insert_individual(
-                conn, color=c.color, origin_season=1, parent_id=None, kind="founder_random", seed=seed,
-                mutation_meta={"init": "torch_default_init"}, color_meta=c.meta))
+                conn, color=palette[k].color, origin_season=1, parent_id=None, kind="founder_random", seed=seed,
+                mutation_meta={"init": "torch_default_init"}, color_meta=palette[k].meta))
     return ids
 
 
