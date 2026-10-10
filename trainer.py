@@ -32,8 +32,8 @@ class Trainer:
     def __init__(self, simulations=200):
         self.net  = SuperTatetiNet()
         self.mcts = MCTS(self.net, simulations=simulations, batch_size=8)
-        self.optimizer = optim.Adam(self.net.parameters(), lr=0.001)
-        self.memory = deque(maxlen=5000)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=0.0003)  # antes 0.001
+        self.memory    = deque(maxlen=10000)                            # antes 5000
 
     # ── Fase 1: IA vs oponente random ─────────────────────────────
     def play_vs_random(self, ia_player=1):
@@ -172,7 +172,7 @@ class Trainer:
 
             last_loss = None
             for _ in range(4):
-                last_loss = self.train_step(batch_size=64)
+                last_loss = self.train_step(batch_size=256)
 
             iter_f1 += 1
             transcurrido = time.time() - t_inicio
@@ -251,7 +251,7 @@ if __name__ == "__main__":
 
     version = 1
     while True:
-        carpeta = f"{fecha}-v{version}"
+        carpeta = f"training/{fecha}-v{version}"
         if not os.path.exists(carpeta):
             os.makedirs(carpeta)
             break

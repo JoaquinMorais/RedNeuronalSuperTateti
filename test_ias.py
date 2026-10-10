@@ -103,7 +103,8 @@ if __name__ == "__main__":
 
     evaluate(
         "model.pth",
-        "training/9-6/checkpoint_100.pth",
+        "models/model_easy.pth",
+        #"training/9-6/checkpoint_100.pth",
         
         games=500
     )

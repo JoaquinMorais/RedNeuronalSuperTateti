@@ -1,0 +1,6 @@
+2026/06/13-14:55 - Entrenando desde cero
+2026/06/13-14:55 - training/06-13-v2
+2026/06/13-14:55 - Tiempo total: 10hs
+2026/06/13-14:55 -   Fase 1 (vs random):  240 min
+2026/06/13-14:55 -   Fase 2 (self-play):  360 min
+2026/06/13-14:55 - === FASE 1: IA vs Random ===

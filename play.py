@@ -81,10 +81,10 @@ def get_human_move(game):
     
     while True:
         try:
-            if not game.active_board:
-                board_idx = int(input("Tablero (0-8): "))
-            else:
+            if game.active_board is not None:
                 board_idx = game.active_board
+            else:
+                board_idx = int(input("Tablero (0-8): "))
             cell_idx  = int(input("Casilla (0-8): "))
             
             move_flat = board_idx * 9 + cell_idx
@@ -96,11 +96,11 @@ def get_human_move(game):
         except (ValueError, IndexError):
             print("Ingresá números entre 0 y 8")
 
-def play():
+def play(model = "model.pth"):
     # Cargar modelo
     net = SuperTatetiNet()
     try:
-        net.load_state_dict(torch.load("model.pth", weights_only=True))
+        net.load_state_dict(torch.load(model, weights_only=True))
         net.eval()
         print("Modelo cargado correctamente")
     except FileNotFoundError:
@@ -147,4 +147,4 @@ def play():
         print("Ganó la IA!")
 
 if __name__ == "__main__":
-    play()
+    play(model = "model.pth")
