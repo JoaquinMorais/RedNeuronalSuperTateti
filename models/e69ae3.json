@@ -1,0 +1,22 @@
+{
+  "architecture": "SuperTatetiNet",
+  "architecture_signature": "20812cd7964fb072",
+  "color": "#e69ae3",
+  "created_at": "2026-10-11T02:00:52.862533+00:00",
+  "format_version": 1,
+  "kind": "mutant",
+  "model_version": 1,
+  "mutation_level": "small",
+  "mutation_meta": {
+    "mutate_value_head": false,
+    "rate": 0.1,
+    "sigma": 0.05
+  },
+  "mutation_seed": 2338860237976072216,
+  "origin_season": 503,
+  "parent_id": 6532,
+  "pruned_at": "2026-10-11T02:05:58.012512+00:00",
+  "torch_version": "2.14.1+cpu",
+  "weights_deleted": true,
+  "weights_sha256": "22504a434e5ee6aa074ab62876e4d2a6441b237753d4f3dc1207e3de19f74e2d"
+}

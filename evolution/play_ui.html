@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Super Tateti · jugar contra la IA</title>
+<style>
+  :root { --bg:#f4f5f7; --fg:#1d2330; --card:#fff; --line:#cfd5df; --x:#2563eb; --o:#dc2626; --ok:#16a34a;
+          --last-h:#2563eb; --last-a:#f59e0b; --muted:#667085; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151c; --fg:#e6e9ef; --card:#1b2030; --line:#39415a; --x:#60a5fa; --o:#f87171; --ok:#4ade80;
+            --last-h:#60a5fa; --last-a:#fbbf24; --muted:#98a2b3; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--fg);
+         display:flex; flex-direction:column; align-items:center; padding:16px; gap:12px; }
+  h1 { font-size:1.2rem; margin:0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; }
+  #opp { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  #swatch { width:22px; height:22px; border-radius:6px; border:1px solid var(--line); }
+  #oppname { font-family:ui-monospace, monospace; font-weight:600; }
+  .muted { color:var(--muted); font-size:.9rem; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+  button.ctl { padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card);
+               color:var(--fg); cursor:pointer; font:inherit; }
+  button.ctl:hover { border-color:var(--ok); }
+  #status { font-weight:600; min-height:1.4em; text-align:center; }
+  #board { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; padding:8px; background:var(--line);
+           border-radius:12px; width:min(94vw, 560px); }
+  .small { position:relative; display:grid; grid-template-columns:repeat(3, 1fr); gap:3px; padding:4px;
+           background:var(--card); border-radius:8px; border:3px solid transparent; }
+  .small.active { border-color:var(--ok); }
+  .small.closed .cell { opacity:.25; }
+  .cell { aspect-ratio:1; border:1px solid var(--line); background:transparent; border-radius:5px; padding:0;
+          font:700 clamp(14px, 4.2vw, 26px)/1 system-ui; color:var(--fg); cursor:default; }
+  .cell.x { color:var(--x); } .cell.o { color:var(--o); }
+  .cell.can { cursor:pointer; background:rgba(22,163,74,.12); } .cell.can:hover { background:rgba(22,163,74,.35); }
+  .cell.lh { outline:3px solid var(--last-h); outline-offset:-3px; }
+  .cell.la { outline:3px solid var(--last-a); outline-offset:-3px; }
+  .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none;
+             font:800 clamp(48px, 16vw, 110px)/1 system-ui; }
+  .overlay.x { color:var(--x); } .overlay.o { color:var(--o); } .overlay.d { color:var(--muted); }
+  #legend { font-size:.85rem; color:var(--muted); text-align:center; max-width:560px; }
+  .sw { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:middle; margin:0 3px 0 8px; }
+  #banner { font-size:1.2rem; font-weight:700; text-align:center; }
+</style>
+</head>
+<body>
+  <h1>Super Tateti · jugar contra la IA</h1>
+  <div id="opp" class="card">
+    <span id="swatch"></span><span id="oppname">…</span>
+    <span class="muted" id="oppinfo"></span>
+  </div>
+  <div class="row">
+    <button class="ctl" onclick="newGame('x')">Nueva partida · empiezo yo (X)</button>
+    <button class="ctl" onclick="newGame('o')">Nueva partida · empieza la IA (O)</button>
+  </div>
+  <div id="score" class="muted"></div>
+  <div id="status">Elegí cómo empezar.</div>
+  <div id="banner"></div>
+  <div id="board"></div>
+  <div id="legend">
+    Jugás en el tablero chico que indica la casilla que acaba de elegir el rival (borde verde); si ese tablero ya está cerrado, la regla del juego decide cuál queda activo.
+    <br><span class="sw" style="background:var(--last-h)"></span>tu última jugada
+    <span class="sw" style="background:var(--last-a)"></span>última jugada de la IA
+  </div>
+<script>
+const $ = id => document.getElementById(id);
+let S = null, busy = false;
+
+async function api(path, body) {
+  const r = await fetch(path, body ? {method:'POST', body:JSON.stringify(body)} : {});
+  const j = await r.json();
+  if (!r.ok) { $('status').textContent = j.error || 'Error'; return null; }
+  return j;
+}
+async function newGame(side) { const s = await api('/api/new', {human: side}); if (s) render(s); }
+async function move(b, c) {
+  if (busy) return; busy = true;
+  const s = await api('/api/move', {board: b, cell: c});
+  busy = false; if (s) render(s);
+}
+function render(s) {
+  S = s;
+  const o = s.opponent;
+  $('swatch').style.background = o.color;
+  $('oppname').textContent = o.tag;
+  $('oppinfo').textContent = `mejor de la tabla anual de la temporada ${o.season} · ${o.total} pts (Liga ${o.league} + Copa ${o.cup} + Recopa ${o.recopa})`;
+  $('score').textContent = `Vos ${s.score.human} · IA ${s.score.ai} · Empates ${s.score.draw}`;
+  const board = $('board'); board.innerHTML = '';
+  if (!s.started) return;
+  const mark = s.human === 1 ? 'X' : 'O';
+  const myTurn = s.winner === null && s.current === s.human;
+  for (let b = 0; b < 9; b++) {
+    const sm = document.createElement('div');
+    const closed = s.small[b] !== 'p';
+    sm.className = 'small' + (closed ? ' closed' : '') + (myTurn && !closed && (s.active_board === null || s.active_board === b) ? ' active' : '');
+    for (let c = 0; c < 9; c++) {
+      const v = s.cells[b][c], btn = document.createElement('button');
+      btn.className = 'cell' + (v === 1 ? ' x' : v === -1 ? ' o' : '');
+      btn.textContent = v === 1 ? 'X' : v === -1 ? 'O' : '';
+      const can = myTurn && s.valid[b * 9 + c] === 1;
+      if (can) { btn.classList.add('can'); btn.onclick = () => move(b, c); }
+      if (s.last_human && s.last_human[0] === b && s.last_human[1] === c) btn.classList.add('lh');
+      if (s.last_ai && s.last_ai[0] === b && s.last_ai[1] === c) btn.classList.add('la');
+      sm.appendChild(btn);
+    }
+    if (closed) {
+      const ov = document.createElement('div');
+      ov.className = 'overlay ' + s.small[b];
+      ov.textContent = s.small[b] === 'x' ? 'X' : s.small[b] === 'o' ? 'O' : '=';
+      sm.appendChild(ov);
+    }
+    board.appendChild(sm);
+  }
+  const act = s.active_board === null ? 'podés jugar en cualquier tablero abierto' : `debés jugar en el tablero ${s.active_board + 1} (borde verde)`;
+  $('banner').textContent = s.winner === 'human' ? '🎉 ¡Ganaste!' : s.winner === 'ai' ? 'Ganó la IA' : s.winner === 'draw' ? 'Empate' : '';
+  $('status').textContent = s.winner ? 'Partida terminada · jugá otra.' : myTurn ? `Tu turno (${mark}) · ${act}` : 'Piensa la IA…';
+}
+api('/api/state').then(s => { if (s) render(s); });
+</script>
+</body>
+</html>

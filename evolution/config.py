@@ -51,6 +51,10 @@ class Config:
     mutate_value_head: bool = False      # la cabeza de valor no interviene en la jugada
     color_tiers: dict = field(default_factory=lambda: dict(DEFAULT_TIERS))
     parent_policy: ParentPolicy = field(default_factory=ParentPolicy)
+    retention_seasons: int = 10          # temporadas que se guarda el .pth de una IA expulsada (0 = nunca borrar)
+    champions_top: int = 30              # filas del ranking de campeones
+    play_host: str = "0.0.0.0"
+    play_port: int = 8765
     db_retries: int = 8
     db_retry_base_delay: float = 0.5
     color: bool = False
@@ -91,6 +95,15 @@ def load_config(env: dict | None = None) -> Config:
     if "SEED_MODEL_PATH" in env:
         kw["seed_model_path"] = Path(env["SEED_MODEL_PATH"])
 
+    if "MODEL_RETENTION_SEASONS" in env:
+        kw["retention_seasons"] = int(env["MODEL_RETENTION_SEASONS"])
+    if "CHAMPIONS_TOP" in env:
+        kw["champions_top"] = int(env["CHAMPIONS_TOP"])
+    if "PLAY_PORT" in env:
+        kw["play_port"] = int(env["PLAY_PORT"])
+    if "PLAY_HOST" in env:
+        kw["play_host"] = env["PLAY_HOST"]
+
     path = env.get("EVO_CONFIG_FILE")
     if path:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -118,6 +131,8 @@ def _validate(cfg: Config) -> None:
         raise ValueError("level_probs debe tener small/medium/large y sumar 1")
     if set(cfg.mutation_levels) != {"small", "medium", "large"}:
         raise ValueError("mutation_levels debe definir small/medium/large")
+    if cfg.retention_seasons < 0 or cfg.champions_top < 1:
+        raise ValueError("MODEL_RETENTION_SEASONS debe ser >= 0 y CHAMPIONS_TOP >= 1")
     cpr = cfg.parent_policy.children_per_rank
     if (not all(isinstance(n, int) and n >= 0 for n in cpr) or len(cpr) > POPULATION or sum(cpr) != CHILDREN):
         raise ValueError(f"parent_policy.children_per_rank debe sumar exactamente {CHILDREN} (recibido {list(cpr)})")

@@ -20,6 +20,9 @@ COPY scripts ./scripts
 # /app/models es un volumen: los modelos NO viven en la capa efímera del contenedor
 VOLUME ["/app/models"]
 
+# Puerto de la página para jugar contra la IA (publicar con -p 127.0.0.1:8765:8765)
+EXPOSE 8765
+
 # Forma exec: Python es el proceso principal y recibe SIGTERM (docker stop) directamente
 STOPSIGNAL SIGTERM
 CMD ["python", "-m", "evolution", "run"]

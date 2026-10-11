@@ -175,3 +175,6 @@ CREATE TABLE IF NOT EXISTS historical_best (
     model_file    TEXT NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Migración idempotente: fecha en que se borró el .pth de un modelo antiguo (el .json y la fila se conservan)
+ALTER TABLE individuals ADD COLUMN IF NOT EXISTS model_pruned_at TIMESTAMPTZ;

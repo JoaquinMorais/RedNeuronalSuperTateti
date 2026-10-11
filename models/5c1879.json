@@ -15,6 +15,8 @@
   "mutation_seed": 3736136122983240137,
   "origin_season": 42,
   "parent_id": 536,
+  "pruned_at": "2026-10-10T23:08:35.313564+00:00",
   "torch_version": "2.14.1+cpu",
+  "weights_deleted": true,
   "weights_sha256": "7d6ec66a1d3a5affb9b1d7c5fe3b4e33b9d5b052dfb4d152c2a0ff6980cb0b2b"
 }

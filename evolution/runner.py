@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from . import competitions as comp
-from . import evolve, modelstore, repo, reports, rules
+from . import evolve, modelstore, prune, repo, reports, rules
 from .config import Config
 from .db import Database
 from .display import ROUND_NAME, Display
@@ -167,6 +167,12 @@ class Trainer:
         self.db.run(lambda c: evolve.complete_season(c, info))
         self.out.titles = self.db.run(lambda c: reports.titles_through(c, info.number))  # ya incluye a los campeones de esta temporada
         self.out.final_report(self._final_report_data(info, hist))
+        pruned = prune.prune_models(self.db, self.cfg, info.number)
+        if pruned:
+            mb = sum(p["bytes"] for p in pruned) / 1e6
+            self.out.emit(self.out.dim(
+                f"  Limpieza de modelos: {len(pruned)} archivo(s) .pth eliminados ({mb:.1f} MB): IA expulsadas hace "
+                f"{self.cfg.retention_seasons}+ temporadas y sin títulos (se conserva su .json)."))
 
     # -- fechas ---------------------------------------------------------
     def _match_info(self, m: dict) -> str:

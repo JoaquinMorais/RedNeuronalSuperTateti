@@ -29,6 +29,21 @@ def champion_rows(conn, upto: int | None = None) -> list[dict]:
            ORDER BY s.number""", (upto, upto)).fetchall()
 
 
+def individual_status(conn) -> dict[str, dict]:
+    """{color: {"last_season": L, "expelled": bool}} para toda IA que haya competido.
+
+    ``expelled`` = su última temporada terminó y no pasó a la siguiente generación
+    (``L`` es la temporada en la que fue expulsada). Si no, sigue compitiendo."""
+    rows = conn.execute(
+        """WITH last AS (SELECT p.individual_id, max(s.number) AS n FROM season_participants p
+                         JOIN seasons s ON s.id = p.season_id GROUP BY p.individual_id)
+           SELECT i.color, l.n AS last_season,
+                  (s.status = 'completed' AND NOT EXISTS (
+                       SELECT 1 FROM evolution_plan e WHERE e.season_id = s.id AND e.individual_id = i.id)) AS expelled
+           FROM last l JOIN seasons s ON s.number = l.n JOIN individuals i ON i.id = l.individual_id""").fetchall()
+    return {r["color"]: {"last_season": r["last_season"], "expelled": r["expelled"]} for r in rows}
+
+
 def titles_through(conn, upto: int | None = None) -> dict:
     return titlemod.build_title_index(champion_rows(conn, upto))
 
@@ -63,24 +78,30 @@ def _seasons_txt(nums: list[int]) -> str:
     return ", ".join(f"T{n}" for n in nums)
 
 
-def render_champions(conn, out: Display) -> None:
+def render_champions(conn, out: Display, top: int = 30) -> None:
+    """Campeones por temporada (las ``top`` más recientes) y ranking de campeones (los ``top`` mejores)."""
     rows = champion_rows(conn)
     out.banner("CAMPEONES")
     if not rows:
         out.emit("  Todavía no terminó ninguna temporada.")
         return
-    out.section("Campeones de cada temporada")
+    shown = rows[-top:]
+    out.section("Campeones de cada temporada" + (f" (las últimas {top} de {len(rows)})" if len(rows) > top else ""))
     out.emit(f"  {'Temp':>4}  {'Liga':<10} {'Copa':<10} {'Subcampeón':<11} {'Recopa':<10}")
-    for r in rows:
+    for r in shown:
         out.emit(f"  {r['number']:>4}  {out.cell(r['league'], 10, False)} {out.cell(r['cup'], 10, False)} "
                  f"{out.cell(r['runner_up'], 11, False)} {out.cell(r['recopa'], 10, False)}")
+    status = individual_status(conn)
+    ranking = titlemod.rank_champions(titlemod.build_title_index(rows))
     out.section("Ranking de campeones (prioridad: Liga, Copa, Recopa)")
-    idx = titlemod.build_title_index(rows)
-    ranking = titlemod.rank_champions(idx)
-    out.emit(f"  {'Pos':>3}  {'IA':<10} {'Liga':>4} {'Copa':>4} {'Recopa':>6}   Títulos")
-    for pos, (color, t) in enumerate(ranking, start=1):
+    out.emit(f"  {'Pos':>3}  {'IA':<10} {'Liga':>4} {'Copa':>4} {'Recopa':>6}  {'Estado':<15} Títulos")
+    for pos, (color, t) in enumerate(ranking[:top], start=1):
+        st = status.get(color)
+        estado = "compitiendo" if st is None or not st["expelled"] else f"expulsada T{st['last_season']}"
         det = " · ".join(f"{name}: {_seasons_txt(t[k])}" for k, name in (("L", "Ligas"), ("C", "Copas"), ("RC", "Recopas")) if t[k])
-        out.emit(f"  {pos:>3}  {out.cell(color, 10, False)} {len(t['L']):>4} {len(t['C']):>4} {len(t['RC']):>6}   {det}")
+        out.emit(f"  {pos:>3}  {out.cell(color, 10, False)} {len(t['L']):>4} {len(t['C']):>4} {len(t['RC']):>6}  {estado:<15} {det}")
+    if len(ranking) > top:
+        out.emit(out.dim(f"  Mostrando {top} de {len(ranking)} campeones. Para ver más: `champions N` (en el menú: `3 N`)."))
 
 
 # ---------------------------------------------------------------------------

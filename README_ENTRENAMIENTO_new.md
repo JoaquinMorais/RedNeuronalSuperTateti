@@ -49,6 +49,33 @@ docker compose run --rm trainer python -m evolution menu        # lo mismo, con 
 - **Tabla anual**: puntos de Liga + Copa + Recopa por IA, y su destino: `se conserva`, `se conserva + N hijos`, `N hijos` o `sale`.
 - **Ranking de campeones**: orden de prioridad Liga, Copa, Recopa; a la derecha, en qué temporadas ganó cada título (`Ligas: T1, T3 · Recopas: T2`).
 
+## Menú, ranking y jugar contra la IA
+```bash
+docker compose run --rm -p 127.0.0.1:8765:8765 trainer python -m evolution menu
+```
+El `-p` publica el puerto para la opción 4 (jugar). Las opciones admiten un argumento:
+
+| Escribís | Hace |
+|---|---|
+| `1` | estado de las temporadas con sus campeones |
+| `2` / `2 21` | detalle de una temporada (sin número, lo pregunta) / de la temporada 21 |
+| `3` / `3 100` | ranking de campeones: los 30 mejores (`CHAMPIONS_TOP`) / los 100 mejores |
+| `4` / `4 12` | jugar contra el mejor de la tabla anual de la última temporada terminada / de la temporada 12 |
+| `0` | salir |
+
+Equivalentes directos: `python -m evolution champions 100`, `python -m evolution play 12`.
+
+- **Ranking de campeones**: ahora tiene la columna *Estado*: `compitiendo`, o `expulsada T7` (la temporada en la que no pasó a la siguiente generación).
+- **Jugar**: la opción 4 abre una página en `http://localhost:8765` (tablero 9x9, tablero activo resaltado, tus jugadas y las de la IA marcadas, marcador de la sesión; podés empezar vos o la IA). La IA juega igual que en los torneos (mejor movimiento legal de su red, sin MCTS). Ctrl+C vuelve al menú. Si el puerto está ocupado, `PLAY_PORT=9000`.
+
+## Limpieza de modelos (espacio en disco)
+Después de cada temporada se borra el `.pth` de las IA que cumplan **todo** esto:
+1. fueron expulsadas (no pasaron a la siguiente generación) hace `MODEL_RETENTION_SEASONS` temporadas o más (por defecto **10**; `0` desactiva la limpieza);
+2. nunca fueron 1.ª de la tabla anual en ninguna temporada;
+3. nunca ganaron una Liga, una Copa ni una Recopa.
+
+Se conservan siempre: las IA que siguen compitiendo, las 1.ª de tabla anual, las campeonas y `models/historical/`. El `.json` de cada modelo borrado se queda (con `weights_deleted: true`) y su fila en la base también (linaje, puntajes). Para ver qué se borraría sin borrar: `python -m evolution prune --dry-run`; para forzarla a mano: `python -m evolution prune` (necesita que no haya otro entrenamiento corriendo).
+
 ## Reiniciar desde cero (solo mientras se prueba)
 `docker compose down -v` borra la base de datos. Si después querés empezar limpio, borrá también los modelos **generados** (no `models/model.pth` ni `models/model_easy.pth`, que son tuyos):
 ```bash
