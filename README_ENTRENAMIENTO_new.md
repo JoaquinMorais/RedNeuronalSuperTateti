@@ -133,6 +133,15 @@ A ~390 temporadas/hora una noche son miles de temporadas. Qué crece y cómo se 
 - **Git**: los modelos generados no deben versionarse (`.gitignore` ya ignora `models/*` salvo `model.pth` y `model_easy.pth`). Si ya estaban versionados, `git add .` tarda por hashearlos: `git rm -r -q --cached models && git add .gitignore models/model.pth models/model_easy.pth`. Si además `.git` pesa GB (`du -sh .git`), hay que reescribir la historia (p. ej. con `git filter-repo`; haz una copia antes).
 - Diagnóstico rápido: `du -sh .git models`, `docker system df`, `sudo du -sh /var/lib/docker/containers/*/*-json.log`.
 
+## Pesos que crecían hasta dar NaN (corregido)
+**Síntoma**: tras miles de temporadas, `IllegalMoveError: La red eligió un movimiento ilegal: 0` y el entrenamiento se detenía.
+**Causa**: la mutación suma ruido proporcional al desvío *actual* de cada tensor, así que los pesos de un linaje crecían ≈ ×1,019 por generación (×6,6 cada 100, ×10⁸ cada 1000). Hacia la generación ~1350 la red desborda float32 y devuelve NaN; `softmax` propaga el NaN a toda la fila y `argmax` devolvía la casilla 0, que podía ser ilegal.
+**Arreglo (3 capas)**:
+1. **El motor no se cae**: si la política no es finita, esa red juega el primer movimiento legal (pierde y es eliminada). Las redes sanas juegan exactamente igual que antes.
+2. **Reescalado que conserva la jugada**: antes de mutar, si algún tensor de pesos creció más de `MUTATION_NORM_THRESHOLD` (4) veces respecto a su desvío natural, se reescalan las capas (una red ReLU es homogénea positiva: la jugada queda idéntica). Un hijo de una red que ya desbordaba nace sano y funcional. `0` = comportamiento anterior. Los hijos creados antes del arreglo se reproducen con el algoritmo anterior (la fila no tiene `norm_threshold`).
+3. **Aviso**: al empezar cada temporada se avisa si alguna IA tiene pesos que desbordan.
+La cabeza de valor no se toca (no interviene en la jugada).
+
 ## Pruebas
 ```bash
 TEST_DATABASE_URL=postgresql://usuario:clave@host:5432/base_de_pruebas python -m pytest tests -q
