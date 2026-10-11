@@ -55,7 +55,8 @@ def insert_individual(conn, *, color, origin_season, parent_id, kind, level=None
 
 def mutation_meta_for(cfg: Config, level: str) -> dict:
     lv = cfg.mutation_levels[level]
-    return {"rate": lv.rate, "sigma": lv.sigma, "mutate_value_head": cfg.mutate_value_head}
+    return {"rate": lv.rate, "sigma": lv.sigma, "mutate_value_head": cfg.mutate_value_head,
+            "norm_threshold": cfg.mutation_norm_threshold}
 
 
 def bootstrap_population(conn, cfg: Config, master_seed: int, seed_hash: str | None) -> list[int]:
@@ -119,7 +120,8 @@ def materialize_models(db, cfg: Config) -> list[int]:
             parent = db.run(lambda c: c.execute("SELECT * FROM individuals WHERE id=%s", (r["parent_id"],)).fetchone())
             psd = modelstore.load_state_dict(cfg.models_dir / parent["model_file"], parent["model_sha256"] or digests.get(parent["id"]))
             sd = mutation.mutate_state_dict(psd, MutationLevel(meta["rate"], meta["sigma"]),
-                                            r["mutation_seed"], meta["mutate_value_head"])
+                                            r["mutation_seed"], meta["mutate_value_head"],
+                                            meta.get("norm_threshold", 0.0))   # filas anteriores a la corrección: sin reescalado
         digest = modelstore.weights_hash(sd)
         path = cfg.models_dir / r["model_file"]
         if path.exists():

@@ -7,6 +7,7 @@ que una partida interrumpida puede repetirse y da exactamente el mismo resultado
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 
@@ -20,18 +21,42 @@ torch.set_num_threads(1)  # redes diminutas: más rápido y reproducible con 1 h
 X, O, DRAW = "x", "o", "draw"
 
 
+log = logging.getLogger("evolution.engine")
+_WARNED: set[int] = set()
+
+
 class IllegalMoveError(RuntimeError):
     pass
 
 
+def net_is_finite(net) -> bool:
+    """¿La política de la red es finita en la posición inicial? (pesos enormes desbordan float32 -> NaN).
+    Solo cuenta la política: es lo único que se usa para jugar (la cabeza de valor no interviene)."""
+    g = SuperTateti()
+    with torch.no_grad():
+        policy, _value = net(torch.from_numpy(g.get_state()).unsqueeze(0), torch.from_numpy(g.get_valid_moves()).unsqueeze(0))
+    return bool(torch.isfinite(policy).all())
+
+
 def select_move(net, game: SuperTateti) -> int:
-    """Índice plano (0..80) del mejor movimiento legal según la red."""
+    """Índice plano (0..80) del mejor movimiento legal según la red.
+
+    Si la red produce valores no finitos (NaN/inf por pesos gigantes), ``softmax`` da NaN en TODA la fila y un
+    ``argmax`` ingenuo devolvería la casilla 0 aunque sea ilegal. En ese caso se juega el primer movimiento
+    legal (respaldo determinista): la red "rota" pierde y es eliminada, pero el entrenamiento no se detiene."""
     mask = game.get_valid_moves()
     state = torch.from_numpy(game.get_state()).unsqueeze(0)
+    mask_t = torch.from_numpy(mask).unsqueeze(0)
     with torch.no_grad():
-        policy, _value = net(state, torch.from_numpy(mask).unsqueeze(0))
-    move = int(torch.argmax(policy, dim=-1).item())
-    if mask[move] != 1:  # no debería ocurrir: la política está enmascarada
+        policy, _value = net(state, mask_t)
+    if not torch.isfinite(policy).all():
+        if id(net) not in _WARNED:
+            _WARNED.add(id(net))
+            log.warning("Una red produce valores no finitos (pesos demasiado grandes): juega con el movimiento de respaldo.")
+        policy = torch.nan_to_num(policy, nan=0.0, posinf=1.0, neginf=0.0)
+    # argmax SOLO entre movimientos legales (las probabilidades de los legales son >= 0; las ilegales quedan en -1)
+    move = int(torch.argmax(policy.masked_fill(mask_t == 0, -1.0), dim=-1).item())
+    if mask[move] != 1:  # no debería ocurrir
         raise IllegalMoveError(f"La red eligió un movimiento ilegal: {move}")
     return move
 

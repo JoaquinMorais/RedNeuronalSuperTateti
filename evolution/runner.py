@@ -10,7 +10,7 @@ from . import additions, benchmark, evolve, modelstore, prune, repo, reports, ru
 from .config import Config
 from .db import Database
 from .display import ROUND_NAME, Display
-from .engine import play_match
+from .engine import net_is_finite, play_match
 from .rng import derive_seed
 
 log = logging.getLogger("evolution.runner")
@@ -110,6 +110,11 @@ class Trainer:
             if r["model_sha256"] is None:
                 raise RuntimeError(f"El modelo {r['model_file']} no está materializado")
             self.nets[r["id"]] = modelstore.load_net(self.cfg.models_dir / r["model_file"], r["model_sha256"])
+        broken = [info.color_of[i] for i, n in self.nets.items() if i in info.color_of and not net_is_finite(n)]
+        if broken:
+            self.out.emit(f"AVISO: {len(broken)} IA tienen pesos tan grandes que su red desborda float32 ({', '.join(broken[:5])}"
+                          f"{'...' if len(broken) > 5 else ''}). Juegan con el movimiento de respaldo (pierden y salen); "
+                          f"sus hijos se generan con los pesos reescalados (MUTATION_NORM_THRESHOLD).")
 
     # ------------------------------------------------------------------
     def _run_season(self, season_row: dict, master: int, resumed: bool) -> None:

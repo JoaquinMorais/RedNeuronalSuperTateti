@@ -49,6 +49,7 @@ class Config:
     mutation_levels: dict = field(default_factory=lambda: dict(DEFAULT_MUTATION_LEVELS))
     level_probs: dict = field(default_factory=lambda: dict(DEFAULT_LEVEL_PROBS))
     mutate_value_head: bool = False      # la cabeza de valor no interviene en la jugada
+    mutation_norm_threshold: float = 4.0  # reescala (sin cambiar la jugada) los pesos de un padre que crecieron > N veces; 0 = no
     color_tiers: dict = field(default_factory=lambda: dict(DEFAULT_TIERS))
     parent_policy: ParentPolicy = field(default_factory=ParentPolicy)
     retention_seasons: int = 10          # temporadas que se guarda el .pth de una IA expulsada (0 = nunca borrar)
@@ -71,6 +72,7 @@ class Config:
             "mutation_levels": {k: vars(v) for k, v in self.mutation_levels.items()},
             "level_probs": self.level_probs,
             "mutate_value_head": self.mutate_value_head,
+            "mutation_norm_threshold": self.mutation_norm_threshold,
             "color_tiers": {k: vars(v) for k, v in self.color_tiers.items()},
             "parent_policy": {"children_per_rank": list(self.parent_policy.children_per_rank)},
         }
@@ -112,6 +114,8 @@ def load_config(env: dict | None = None) -> Config:
     for var, field in (("BENCH_EVERY", "bench_every"), ("BENCH_GAMES", "bench_games"), ("BENCH_POP_GAMES", "bench_pop_games")):
         if var in env:
             kw[field] = int(env[var])
+    if "MUTATION_NORM_THRESHOLD" in env:
+        kw["mutation_norm_threshold"] = float(env["MUTATION_NORM_THRESHOLD"])
     if "OUTPUT" in env:
         kw["output"] = env["OUTPUT"].strip().lower()
     if "PLAY_PORT" in env:
@@ -150,6 +154,8 @@ def _validate(cfg: Config) -> None:
         raise ValueError("OUTPUT debe ser full, fecha o temporada")
     if min(cfg.bench_every, cfg.bench_games, cfg.bench_pop_games) < 0:
         raise ValueError("BENCH_EVERY, BENCH_GAMES y BENCH_POP_GAMES deben ser >= 0")
+    if cfg.mutation_norm_threshold < 0:
+        raise ValueError("MUTATION_NORM_THRESHOLD debe ser >= 0 (0 = desactivado)")
     if cfg.protect_every < 1 or cfg.compact_after < 0:
         raise ValueError("MODEL_PROTECT_EVERY debe ser >= 1 y DB_COMPACT_AFTER >= 0")
     if cfg.retention_seasons < 0 or cfg.champions_top < 1:
