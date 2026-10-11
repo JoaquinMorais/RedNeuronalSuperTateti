@@ -52,7 +52,13 @@ class Config:
     color_tiers: dict = field(default_factory=lambda: dict(DEFAULT_TIERS))
     parent_policy: ParentPolicy = field(default_factory=ParentPolicy)
     retention_seasons: int = 10          # temporadas que se guarda el .pth de una IA expulsada (0 = nunca borrar)
+    protect_every: int = 1               # 1 = se conservan TODOS los campeones/1.º de tabla anual; K = solo los de temporadas múltiplo de K
+    compact_after: int = 0               # >0: en temporadas más viejas que N se borran las jugadas y el historial de fechas de la BD
     champions_top: int = 30              # filas del ranking de campeones
+    bench_every: int = 5                 # cada cuántas temporadas se mide contra los bots fijos (0 = nunca)
+    bench_games: int = 120               # partidas del 1.º de la tabla anual contra cada bot
+    bench_pop_games: int = 8             # partidas de CADA IA de la población contra cada bot (0 = solo el 1.º)
+    output: str = "full"                 # full | fecha | temporada (cuánto imprime el entrenamiento)
     play_host: str = "0.0.0.0"
     play_port: int = 8765
     db_retries: int = 8
@@ -97,8 +103,17 @@ def load_config(env: dict | None = None) -> Config:
 
     if "MODEL_RETENTION_SEASONS" in env:
         kw["retention_seasons"] = int(env["MODEL_RETENTION_SEASONS"])
+    if "MODEL_PROTECT_EVERY" in env:
+        kw["protect_every"] = int(env["MODEL_PROTECT_EVERY"])
+    if "DB_COMPACT_AFTER" in env:
+        kw["compact_after"] = int(env["DB_COMPACT_AFTER"])
     if "CHAMPIONS_TOP" in env:
         kw["champions_top"] = int(env["CHAMPIONS_TOP"])
+    for var, field in (("BENCH_EVERY", "bench_every"), ("BENCH_GAMES", "bench_games"), ("BENCH_POP_GAMES", "bench_pop_games")):
+        if var in env:
+            kw[field] = int(env[var])
+    if "OUTPUT" in env:
+        kw["output"] = env["OUTPUT"].strip().lower()
     if "PLAY_PORT" in env:
         kw["play_port"] = int(env["PLAY_PORT"])
     if "PLAY_HOST" in env:
@@ -131,6 +146,12 @@ def _validate(cfg: Config) -> None:
         raise ValueError("level_probs debe tener small/medium/large y sumar 1")
     if set(cfg.mutation_levels) != {"small", "medium", "large"}:
         raise ValueError("mutation_levels debe definir small/medium/large")
+    if cfg.output not in ("full", "fecha", "temporada"):
+        raise ValueError("OUTPUT debe ser full, fecha o temporada")
+    if min(cfg.bench_every, cfg.bench_games, cfg.bench_pop_games) < 0:
+        raise ValueError("BENCH_EVERY, BENCH_GAMES y BENCH_POP_GAMES deben ser >= 0")
+    if cfg.protect_every < 1 or cfg.compact_after < 0:
+        raise ValueError("MODEL_PROTECT_EVERY debe ser >= 1 y DB_COMPACT_AFTER >= 0")
     if cfg.retention_seasons < 0 or cfg.champions_top < 1:
         raise ValueError("MODEL_RETENTION_SEASONS debe ser >= 0 y CHAMPIONS_TOP >= 1")
     cpr = cfg.parent_policy.children_per_rank

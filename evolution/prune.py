@@ -3,7 +3,8 @@
 Se borra el .pth de una IA solo si se cumplen TODAS estas condiciones:
   1. Fue expulsada: su última temporada terminó y no pasó a la siguiente generación.
   2. Pasaron al menos ``retention_seasons`` temporadas completas desde esa expulsión.
-  3. Nunca fue 1.ª de la tabla anual ni ganó una Liga, una Copa o una Recopa.
+  3. No fue 1.ª de la tabla anual ni ganó una Liga, una Copa o una Recopa (en temporadas que cuentan: ver
+     ``MODEL_PROTECT_EVERY``; con 1, todas).
 Las IA que siguen compitiendo y los modelos de ``models/historical`` no se tocan nunca.
 La fila de la base de datos y el .json (arquitectura, hash, linaje) se conservan.
 """
@@ -16,6 +17,16 @@ from pathlib import Path
 
 from . import modelstore
 from .config import Config
+
+# Una IA está protegida si fue 1.ª de la tabla anual o ganó Liga/Copa/Recopa en una temporada que cuenta
+# (todas si protect_every = 1; solo las múltiplo de K si K > 1: así los modelos conservados no crecen sin límite).
+PROTECTED_SQL = """(
+    EXISTS (SELECT 1 FROM season_participants q JOIN seasons sq ON sq.id = q.season_id
+            WHERE q.individual_id = i.id AND q.final_position = 1
+              AND (%(every)s <= 1 OR MOD(sq.number, %(every)s) = 0))
+    OR EXISTS (SELECT 1 FROM seasons z WHERE i.id IN (z.league_champion_id, z.cup_champion_id, z.recopa_champion_id)
+              AND (%(every)s <= 1 OR MOD(z.number, %(every)s) = 0))
+)"""
 
 CANDIDATES_SQL = """
 WITH last AS (
@@ -31,9 +42,7 @@ WHERE s.status = 'completed'
   AND NOT EXISTS (SELECT 1 FROM evolution_plan e WHERE e.season_id = s.id AND e.individual_id = i.id)   -- expulsada
   AND l.last_season <= %(completed)s - %(retention)s                                                    -- pasó el plazo
   AND i.model_sha256 IS NOT NULL AND i.model_pruned_at IS NULL
-  AND NOT EXISTS (SELECT 1 FROM season_participants q WHERE q.individual_id = i.id AND q.final_position = 1)
-  AND NOT EXISTS (SELECT 1 FROM seasons z
-                  WHERE i.id IN (z.league_champion_id, z.cup_champion_id, z.recopa_champion_id))
+  AND NOT """ + PROTECTED_SQL + """
 ORDER BY l.last_season, i.id
 """
 
@@ -59,7 +68,8 @@ def prune_models(db, cfg: Config, completed_season: int, dry_run: bool = False) 
     if cfg.retention_seasons <= 0:
         return []
     rows = db.run(lambda c: c.execute(
-        CANDIDATES_SQL, {"completed": completed_season, "retention": cfg.retention_seasons}).fetchall())
+        CANDIDATES_SQL, {"completed": completed_season, "retention": cfg.retention_seasons,
+                         "every": cfg.protect_every}).fetchall())
     done = []
     for r in rows:
         path = cfg.models_dir / r["model_file"]
@@ -72,3 +82,22 @@ def prune_models(db, cfg: Config, completed_season: int, dry_run: bool = False) 
                 "UPDATE individuals SET model_pruned_at=now() WHERE id=%s AND model_pruned_at IS NULL", (i,)))
         done.append({"color": r["color"], "last_season": r["last_season"], "file": r["model_file"], "bytes": freed})
     return done
+
+
+def compact_database(db, completed_season: int, after: int) -> dict:
+    """Libera espacio en la base de datos en temporadas viejas (más de ``after`` temporadas atrás):
+    borra las jugadas guardadas de cada partida y el historial fecha a fecha de la Liga (queda la última
+    fecha, que usan las vistas). Los resultados, tablas finales, linajes y puntajes NO se tocan."""
+    if after <= 0:
+        return {}
+    limit = completed_season - after
+
+    def tx(conn):
+        moves = conn.execute(
+            """UPDATE matches SET moves = NULL WHERE moves IS NOT NULL
+               AND season_id IN (SELECT id FROM seasons WHERE status='completed' AND number <= %s)""", (limit,)).rowcount
+        hist = conn.execute(
+            """DELETE FROM league_history h USING seasons s WHERE h.season_id = s.id AND s.status='completed'
+               AND s.number <= %s AND h.matchday < s.league_matchdays""", (limit,)).rowcount
+        return {"moves_cleared": moves, "history_rows_deleted": hist}
+    return db.run(tx)

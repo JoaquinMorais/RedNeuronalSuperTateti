@@ -213,3 +213,20 @@ CREATE TABLE IF NOT EXISTS season_additions (
     source        TEXT NOT NULL,                        -- archivo original
     added_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Medida absoluta de nivel por temporada (contra rivales fijos: ver benchmark.py)
+CREATE TABLE IF NOT EXISTS season_benchmarks (
+    season_id     INT  NOT NULL REFERENCES seasons(id),
+    subject       TEXT NOT NULL CHECK (subject IN ('top1','population')),
+    opponent      TEXT NOT NULL CHECK (opponent IN ('random','tactical')),
+    individual_id INT  REFERENCES individuals(id),     -- el 1.º de la tabla anual (NULL para la población)
+    games         INT  NOT NULL,
+    wins          INT  NOT NULL,
+    draws         INT  NOT NULL,
+    losses        INT  NOT NULL,
+    x_score       DOUBLE PRECISION,                    -- puntaje jugando como X (comienza)
+    o_score       DOUBLE PRECISION,
+    seed          BIGINT NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (season_id, subject, opponent)
+);

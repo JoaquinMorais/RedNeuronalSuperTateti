@@ -20,6 +20,11 @@ services:
     stop_grace_period: 30s                    # tiempo para terminar la partida en curso y cerrar limpio
     tty: true                                 # colores reales en `docker compose up`/`logs` (sin tty se ve en texto plano)
     restart: on-failure                       # si falla, reanuda desde la base de datos
+    logging:                                  # SIN esto los logs de Docker crecen sin límite y llenan el disco
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       db:
         condition: service_healthy            # no arranca hasta que PostgreSQL acepta conexiones
@@ -30,11 +35,16 @@ services:
       INITIAL_POPULATION: ${INITIAL_POPULATION:-auto}   # auto | seed | random
       SEED: ${SEED:-}                         # vacío = aleatoria (se guarda en la BD)
       MAX_SEASONS: ${MAX_SEASONS:-0}          # 0 = sin límite
+      OUTPUT: ${OUTPUT:-temporada}            # temporada = 1 línea por temporada (recomendado entrenando) | fecha | full
+      MODEL_PROTECT_EVERY: ${MODEL_PROTECT_EVERY:-10}   # conservar campeones/1.º solo de temporadas múltiplo de 10 (1 = todos)
+      MODEL_RETENTION_SEASONS: ${MODEL_RETENTION_SEASONS:-10}
+      DB_COMPACT_AFTER: ${DB_COMPACT_AFTER:-50}         # borra jugadas/historial de fechas de temporadas con más de 50 de antigüedad
+      BENCH_EVERY: ${BENCH_EVERY:-5}                    # medir contra los bots fijos cada 5 temporadas (0 = nunca)
       # MUTATION_PROBS: small:0.5,medium:0.35,large:0.15
       # EVO_CONFIG_FILE: /app/evo_config.json
       # NO_COLOR: 1
     volumes:
-      - ./models:/app/models                  # volumen persistente de modelos (visible en el host)
+      - ${MODELS_HOST_DIR:-./models}:/app/models   # volumen persistente de modelos (visible en el host)
       - ./model.pth:/seed/model.pth:ro        # red ya entrenada que siembra la 1.ª generación
 
 volumes:

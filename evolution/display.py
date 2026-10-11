@@ -31,12 +31,38 @@ def fmt_time(ms: float) -> str:
     return f"{int(h)}h{int(m):02d}m"
 
 
+LEVELS = {"temporada": 0, "fecha": 1, "full": 2}
+
+
+def bench_text(b: dict | None) -> str:
+    """'1.º vs aleatorio 63% · vs táctico 12% | población 52% · 6%' (vacío si esta temporada no se midió)."""
+    if not b:
+        return ""
+    def g(subject, opp):
+        st = b.get((subject, opp))
+        return f"{st['score']:.0%}" if st and st["n"] else "—"
+    return (f"1.º vs aleatorio {g('top1', 'random')} · vs táctico {g('top1', 'tactical')} | "
+            f"población vs aleatorio {g('population', 'random')} · vs táctico {g('population', 'tactical')}")
+
+
 class Display:
-    def __init__(self, color: bool = False, stream=None):
+    """``level``: 'full' (todo) · 'fecha' (una línea por fecha + eventos de Copa + informe de temporada) ·
+    'temporada' (una línea por temporada). Sirve para no llenar el disco con logs en entrenamientos largos."""
+
+    def __init__(self, color: bool = False, stream=None, level: str = "full"):
+        self.level = level
         self.color = color
         self.stream = stream or sys.stdout
         # {color: {"L": [...], "C": [...], "RC": [...]}}: IA que ya ganaron algo (ver titles.py)
         self.titles: dict = {}
+
+    def shown(self, needed: str) -> bool:
+        """¿Se imprime lo que corresponde al nivel ``needed``?"""
+        return LEVELS[self.level] >= LEVELS[needed]
+
+    def log(self, needed: str, text: str) -> None:
+        if self.shown(needed):
+            self.emit(text)
 
     def emit(self, text: str = "") -> None:
         try:
@@ -96,6 +122,8 @@ class Display:
 
     # -- tablas ----------------------------------------------------------
     def league_table(self, rows: list[dict], md: int) -> None:
+        if not self.shown("full"):
+            return
         self.section(f"Tabla de Liga tras la fecha {md}")
         w = self.id_width() + (2 if self.color else 0)
         self.emit(f"  {'Pos':>3}  {'IA':<{w}} {'PJ':>3} {'G':>3} {'E':>3} {'P':>3} {'Pts':>4}")
@@ -104,6 +132,8 @@ class Display:
                       f"{r['draws']:>3} {r['losses']:>3} {r['points']:>4}")
 
     def event(self, ev: dict) -> None:
+        if not self.shown("fecha"):
+            return
         t = ev["type"]
         if t == "groups_resolved":
             self.section("COPA · fase de grupos terminada")
@@ -139,6 +169,8 @@ class Display:
 
     # -- resúmenes -------------------------------------------------------
     def header(self, *, season: dict, master_seed: int, cfg, db_status: str, progress: dict, resumed: bool) -> None:
+        if not self.shown("fecha"):
+            return
         self.banner(f"TEMPORADA {season['number']} {'(REANUDADA)' if resumed else '(NUEVA)'}")
         n, md_total = season.get("n_participants") or 20, season.get("league_matchdays") or 38
         extra = f"  ({n - 20} IA añadida{'s' if n - 20 != 1 else ''} a la generación normal)" if n != 20 else ""
@@ -153,15 +185,26 @@ class Display:
         self.emit(f"  Partidas                : {progress['done']} jugadas · {progress['pending']} pendientes (programadas)")
 
     def matchday_header(self, md: int, pending: int, total: int = 38) -> None:
+        if not self.shown("full"):
+            return
         self.banner(f"FECHA {md} / {total}")
         self.emit(f"  Partidas por jugar en esta fecha: {pending}")
 
     def matchday_footer(self, md: int, wall_ms: float, game_ms: float, prog: dict, season_ms: float) -> None:
+        if not self.shown("fecha"):
+            return
         self.emit(self.dim(f"  Fecha {md}: {fmt_time(wall_ms)} de reloj ({fmt_time(game_ms)} en partidas)"
                            f" · acumulado de partidas en la temporada: {fmt_time(season_ms)}"
                            f" · completadas {prog['done']} / faltan {prog['pending']} programadas"))
 
     def final_report(self, d: dict) -> None:
+        if not self.shown("fecha"):
+            top = d["global"][0]
+            self.emit(f"Temporada {d['number']}: {len(d['global'])} equipos · Liga {self.ia(d['league'][0]['color'])} · "
+                      f"Copa {self.ia(d['cup_champion'])} · Recopa {self.ia(d['recopa_champion'])} · "
+                      f"1.º de la tabla anual {self.ia(top['color'])} ({top['total_score']} pts) · "
+                      f"{fmt_time(d['sim_ms'])} en partidas" + (f" · MEDIDA: {bench_text(d.get('bench'))}" if d.get("bench") else ""))
+            return
         self.banner(f"FIN DE LA TEMPORADA {d['number']}")
         self.section("Tabla final de Liga")
         w = self.id_width() + (2 if self.color else 0)
@@ -184,4 +227,6 @@ class Display:
             self.emit(f"    {self.ia(ch['color'])} <- hijo de {self.ia(ch['parent'])} (mutación {ch['level']})")
         if d.get("historical"):
             self.emit(f"  Nuevo mejor histórico: {self.ia(d['historical']['color'])} con {d['historical']['total']} pts -> {d['historical']['file']}")
+        if d.get("bench"):
+            self.emit(f"  Medición contra bots fijos ({'puntaje: victoria 1, empate 0,5'}): {bench_text(d['bench'])}")
         self.emit(self.bold(f"  Tiempo total de la temporada: {fmt_time(d['sim_ms'])} en partidas · {fmt_time(d['wall_ms'])} de reloj en esta sesión"))

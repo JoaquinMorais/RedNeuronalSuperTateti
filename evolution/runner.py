@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from . import competitions as comp
-from . import additions, evolve, modelstore, prune, repo, reports, rules
+from . import additions, benchmark, evolve, modelstore, prune, repo, reports, rules
 from .config import Config
 from .db import Database
 from .display import ROUND_NAME, Display
@@ -149,6 +149,8 @@ class Trainer:
         for md in range(start + 1, info.league_matchdays + 1):
             self._play_matchday(info, md)
         for ev in self.db.run(lambda c: comp.finish_league(c, info)):
+            if not self.out.shown("full"):
+                continue
             self.out.section("Liga terminada: clasificación definitiva (con desempates)")
             for pos, color in enumerate(ev["order"], start=1):
                 self.out.emit(f"  {pos:>2}. {self.out.ia(color)}  {ev['points'][color]} pts  -> {rules.league_reward(pos):+d} puntos evolutivos")
@@ -169,9 +171,18 @@ class Trainer:
         self.db.run(lambda c: evolve.plan_evolution(c, self.cfg, info))
         repo.materialize_models(self.db, self.cfg)  # escribe los archivos de los 13 descendientes
         hist = evolve.record_historical_best(self.db, self.cfg, info)
+        top1 = self.db.run(lambda c: c.execute(
+            "SELECT individual_id FROM season_participants WHERE season_id=%s AND final_position=1", (info.id,)).fetchone()["individual_id"])
+        bench = benchmark.run_season_benchmark(self.db, self.cfg, info, self.nets, top1, self._check_stop)  # medida absoluta
         self.db.run(lambda c: evolve.complete_season(c, info))
         self.out.titles = self.db.run(lambda c: reports.titles_through(c, info.number))  # ya incluye a los campeones de esta temporada
-        self.out.final_report(self._final_report_data(info, hist))
+        data = self._final_report_data(info, hist)
+        data["bench"] = bench
+        self.out.final_report(data)
+        compacted = prune.compact_database(self.db, info.number, self.cfg.compact_after)
+        if compacted and (compacted["moves_cleared"] or compacted["history_rows_deleted"]):
+            self.out.log("full", self.out.dim(f"  Base de datos compactada: {compacted['moves_cleared']} jugadas y "
+                                              f"{compacted['history_rows_deleted']} filas de historial de temporadas viejas."))
         pruned = prune.prune_models(self.db, self.cfg, info.number)
         if pruned:
             mb = sum(p["bytes"] for p in pruned) / 1e6
@@ -207,7 +218,7 @@ class Trainer:
                     game_ms += outcome.duration_ms
                     prog = self.db.run(lambda c: comp.progress(c, info.id))
                     info_txt = label_info(m) if label_info else self._match_info(m)
-                    self.out.emit(self.out.match_line(m, info.color_of, outcome, prog, info_txt))
+                    self.out.log("full", self.out.match_line(m, info.color_of, outcome, prog, info_txt))
             events = self.db.run(lambda c: comp.advance_cup(c, info))
             for ev in events:
                 self.out.event(ev)

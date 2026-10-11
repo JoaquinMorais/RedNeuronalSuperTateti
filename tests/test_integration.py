@@ -243,7 +243,7 @@ def test_sigterm_cierre_seguro_y_reanudacion(reference_season, tmp_path):
     try:
         env_vars = {**os.environ, "DATABASE_URL": TEST_URL, "MODELS_DIR": str(e.models), "SEED": "42", "MAX_SEASONS": "1",
                     "SEED_MODEL_PATH": str(ROOT / "model.pth"), "PYTHONUNBUFFERED": "1",
-                    "PGOPTIONS": f"-c search_path={e.schema}"}
+                    "PGOPTIONS": f"-c search_path={e.schema}", "BENCH_EVERY": "0"}
         proc = subprocess.Popen([sys.executable, "-m", "evolution", "run"], cwd=ROOT, env=env_vars,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         seen = []

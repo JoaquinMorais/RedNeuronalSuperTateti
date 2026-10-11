@@ -1,0 +1,11 @@
+/training
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+# Modelos generados por el entrenamiento: NO van a git (pesan cientos de MB y git los hashea en cada `git add .`).
+# Solo se versionan tus modelos originales.
+/models/*
+!/models/model.pth
+!/models/model_easy.pth
+/data/

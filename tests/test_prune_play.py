@@ -195,7 +195,7 @@ def test_cli_menu_con_argumentos(reference_season, monkeypatch, capsys):
     assert main(["champions", "x"]) == 2
     served = {}
     monkeypatch.setattr(play, "serve", lambda session, host, port, emit=print: served.update(opp=session.opponent, port=port))
-    answers = iter(["3 1", "2 1", "4 1", "4", "3 zzz", "9", "0"])
+    answers = iter(["3 1", "2 1", "4 1", "4", "3 zzz", "99", "0"])
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     assert main(["menu"]) == 0
     out = capsys.readouterr().out

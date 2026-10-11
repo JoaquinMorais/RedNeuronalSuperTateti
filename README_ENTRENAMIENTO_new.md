@@ -103,6 +103,36 @@ Remove-Item models\??????.pth, models\??????.json; Remove-Item -Recurse -Force m
 ```
 Lo que **no** conviene es lo contrario: borrar los modelos y conservar la base (la base referencia archivos que ya no existen y el entrenamiento se detiene con error). Una vez que entrenes en serio, ni la base ni `models/` se tocan: son una sola cosa.
 
+## ¿Está aprendiendo? Medir el progreso (menú 8, 9 y 10)
+Los puntos de la Liga/Copa son **relativos**: la población solo se compara consigo misma, así que puede mejorar (o no) sin que los puntos lo muestren. Por eso hay dos medidas independientes, que se leen juntas:
+
+| | Qué mide | Cómo se ve | Dónde |
+|---|---|---|---|
+| **Propuesta 1: nivel absoluto** | El 1.º de cada tabla anual y la población entera juegan contra **rivales fijos** que no evolucionan: un *bot aleatorio* (el piso) y un *bot táctico* (gana tableros, bloquea, no regala la partida; le gana ≈ 96 % al aleatorio). | Curva por temporada con intervalo de confianza, tendencia estadística (¿sube o es ruido?) y nivel actual en palabras. | Se guarda sola cada `BENCH_EVERY` temporadas (5). Ver con `8`; medir una IA ahora con `9`; temporadas ya jugadas con `8 --backfill 10`. |
+| **Propuesta 2: torneo maestro** | Los campeones (1.º de la tabla anual) de temporadas repartidas se enfrentan todos contra todos. ¿Los nuevos le ganan a los viejos? | Elo por campeón, % de puntos que se lleva la generación más nueva (50 % = nada), correlación temporada↔Elo y ciclos (piedra-papel-tijera). | `10` (`10 5` = uno cada 5 temporadas, `10 5 40` = hasta 40). |
+
+**Cómo leerlas juntas**
+- P1 sube **y** P2 sube → aprende de verdad.
+- P1 plana (≈ 50 % vs aleatorio, ≈ 5 % vs táctico) **y** P2 sube → mejora *relativa*: los campeones se especializan en ganarles a sus ancestros (explotan manías de redes deterministas) sin jugar mejor. Es el caso típico de la coevolución cerrada.
+- Ambas planas → la mutación no encuentra mejoras (ver la tabla *Eficacia de las mutaciones* del menú `8`: si los hijos entran al top 7 ≈ 35 % o menos y superan a su padre < 50 %, las mutaciones son ruido o empeoran).
+- Referencias medidas: una red **sin entrenar** hace ≈ 52 % contra el aleatorio y ≈ 5 % contra el táctico.
+
+Variables: `BENCH_EVERY` (0 = no medir), `BENCH_GAMES` (partidas del 1.º por rival, 120), `BENCH_POP_GAMES` (de cada IA de la población por rival, 8; 0 = solo el 1.º). Cada medición cuesta unos segundos; el menú `9` mide una IA puntual con la cantidad de partidas que quieras (`9 12 500`).
+
+## Espacio en disco, logs y git
+A ~390 temporadas/hora una noche son miles de temporadas. Qué crece y cómo se controla:
+
+| Qué | Crecimiento sin control | Control |
+|---|---|---|
+| **Logs de Docker** | miles de líneas por temporada | `OUTPUT=temporada` (1 línea por temporada; `fecha` y `full` dan más detalle) y rotación en `docker-compose.yml` (3 × 10 MB). |
+| **Modelos `.pth`** | ~0,6 MB por temporada de campeones conservados | `MODEL_RETENTION_SEASONS` (10) y `MODEL_PROTECT_EVERY=K`: de los campeones/1.º solo se conservan los de temporadas múltiplo de K (1 = todos). |
+| **Base de datos** | ~0,5 MB por temporada | `DB_COMPACT_AFTER=N`: en temporadas con más de N de antigüedad se borran las jugadas de cada partida y el historial fecha a fecha (resultados, tablas finales y linajes quedan). |
+
+`docker-compose.yml` ya trae valores para entrenar de noche (`OUTPUT=temporada`, `MODEL_PROTECT_EVERY=10`, `DB_COMPACT_AFTER=50`, `BENCH_EVERY=5`); se cambian en `.env` o por línea de comandos.
+- `python -m evolution disk` (menú `11`): modelos por categoría, **archivos huérfanos** (sobras de `down -v`) y tamaño de la base. `prune --orphans` los lista y `prune --orphans --yes` los borra.
+- **Git**: los modelos generados no deben versionarse (`.gitignore` ya ignora `models/*` salvo `model.pth` y `model_easy.pth`). Si ya estaban versionados, `git add .` tarda por hashearlos: `git rm -r -q --cached models && git add .gitignore models/model.pth models/model_easy.pth`. Si además `.git` pesa GB (`du -sh .git`), hay que reescribir la historia (p. ej. con `git filter-repo`; haz una copia antes).
+- Diagnóstico rápido: `du -sh .git models`, `docker system df`, `sudo du -sh /var/lib/docker/containers/*/*-json.log`.
+
 ## Pruebas
 ```bash
 TEST_DATABASE_URL=postgresql://usuario:clave@host:5432/base_de_pruebas python -m pytest tests -q
