@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import logging
+import shlex
 import signal
 import sys
 
 import psycopg
 from psycopg.rows import dict_row
 
-from . import play, prune, reports
+from . import additions, play, prune, reports, sandbox
 from .config import load_config
 from .db import AlreadyRunningError, Database
 from .display import Display
@@ -20,6 +21,9 @@ USAGE = """Uso: python -m evolution <comando>
   season N            analiza la temporada N (Liga, Copa, Recopa, tabla anual)
   champions [N]       campeones por temporada + ranking (los N mejores; por defecto 30)
   play [N]            juega contra el mejor de la tabla anual de la temporada N (por defecto, la última terminada)
+  fight A B           pelea de ida y vuelta entre dos IA (A y B: nº de temporada = 1.º de su tabla anual, o color #rrggbb)
+  testleague A [B..]  Liga de prueba (no se guarda): tus IA + aleatorias hasta 20; opcional seed=N
+  addai f.pth [..]    añade IA a la PRÓXIMA temporada (+2 partidas por IA y grupos más grandes); --list · --cancel #color
   prune [--dry-run]   borra los .pth antiguos (ver MODEL_RETENTION_SEASONS); --dry-run solo muestra qué borraría
   menu                menú interactivo (admite "3 100", "2 21", "4 12", ...)
 Los comandos de consulta son de solo lectura y se pueden usar mientras se entrena."""
@@ -29,12 +33,18 @@ MENU = """
   2) Ver una temporada en detalle        (ej.: "2 21")
   3) Campeones                           (ej.: "3 100" muestra 100; por defecto 30)
   4) Jugar contra la IA                  (ej.: "4 12" = mejor de la temporada 12; por defecto, la última terminada)
+  5) Pelear entre IA                     (ej.: "5 1 311" o "5 #ffffff 12": partida de ida y vuelta)
+  6) Liga de prueba con IA random        (ej.: "6 1 311 #ffffff": esas IA + random hasta 20; opcional seed=N)
+  7) Añadir IA a la próxima temporada    (ej.: "7 models/mi_ia.pth"; "7 --list"; "7 --cancel #abc123")
   0) Salir"""
 
 
 def parse_menu_line(line: str) -> tuple[str, list[str]]:
-    """'3 100' -> ('3', ['100']); '' -> ('', [])."""
-    parts = line.split()
+    """'3 100' -> ('3', ['100']); '' -> ('', []). Admite comillas para rutas con espacios."""
+    try:
+        parts = shlex.split(line)
+    except ValueError:
+        parts = line.split()
     return (parts[0], parts[1:]) if parts else ("", [])
 
 
@@ -73,6 +83,113 @@ def cmd_play(cfg, season: int | None) -> int:
     return 0
 
 
+def _resolve(cfg, tokens: list[str]) -> list[dict] | None:
+    found: dict = {}
+
+    def fn(conn, out):
+        try:
+            found["ias"] = sandbox.resolve_many(conn, cfg.models_dir, tokens)
+        except play.PlayError as e:
+            print(f"No se puede: {e}", file=sys.stderr)
+
+    _read_only(cfg, fn)
+    return found.get("ias")
+
+
+def cmd_fight(cfg, tokens: list[str]) -> int:
+    if len(tokens) != 2:
+        print("Uso: fight A B  (cada IA: nº de temporada o color #rrggbb; ej.: fight 1 311  /  fight 12 a1b2c3)", file=sys.stderr)
+        return 2
+    ias = _resolve(cfg, tokens)
+    if ias is None:
+        return 1
+    out = Display(cfg.color)
+    try:
+        res = sandbox.fight(ias[0], ias[1])
+    except Exception as e:  # noqa: BLE001  (modelo corrupto, hash que no coincide, ...)
+        print(f"No se pudo pelear: {e}", file=sys.stderr)
+        return 1
+    sandbox.render_fight(out, ias[0], ias[1], res)
+    return 0
+
+
+def cmd_testleague(cfg, tokens: list[str]) -> int:
+    import secrets
+    seed, refs = None, []
+    for t in tokens:
+        if t.lower().startswith("seed="):
+            if not t[5:].isdigit():
+                print("seed debe ser un número entero (ej.: seed=5).", file=sys.stderr)
+                return 2
+            seed = int(t[5:])
+        else:
+            refs.append(t)
+    if not refs:
+        print("Uso: testleague A [B ...] [seed=N]  (cada IA: nº de temporada o color #rrggbb)", file=sys.stderr)
+        return 2
+    ias = _resolve(cfg, refs)
+    if ias is None:
+        return 1
+    seed = secrets.randbits(31) if seed is None else seed
+    out = Display(cfg.color)
+    tested = {i["color"] for i in ias}
+
+    def progress(md, games):
+        for g in games:
+            if g["x"] in tested or g["o"] in tested:
+                res = {"x": f"gana {out.ia(g['x'])}", "o": f"gana {out.ia(g['o'])}", "draw": "empate"}[g["result"]]
+                out.emit(f"  F{md:<2} {out.ia(g['x'])} (comienza) vs {out.ia(g['o'])} -> {res}")
+        if md % 10 == 0:
+            out.emit(out.dim(f"  ... fecha {md}/38"))
+
+    out.emit(f"Liga de prueba con {len(ias)} IA + {20 - len(ias)} aleatorias (semilla {seed})...")
+    try:
+        res = sandbox.run_random_league(ias, seed, progress)
+    except (play.PlayError, Exception) as e:  # noqa: BLE001
+        print(f"No se pudo ejecutar la liga de prueba: {e}", file=sys.stderr)
+        return 1
+    sandbox.render_random_league(out, res, ias)
+    return 0
+
+
+def cmd_addai(cfg, args: list[str]) -> int:
+    db = Database(cfg.database_url, cfg.db_retries, cfg.db_retry_base_delay, lock=False)   # se puede usar entrenando
+    out = Display(cfg.color)
+    try:
+        db.connect_with_retries()
+        if not db.run(lambda c: c.execute("SELECT to_regclass('season_additions') AS t").fetchone()["t"]):
+            db.init_schema()     # base creada con una versión anterior: migrar
+        if args[:1] == ["--list"]:
+            rows = db.run(lambda c: additions.list_pending(c))
+            if not rows:
+                print("No hay IA añadidas pendientes.")
+            for r in rows:
+                print(f"  {out.ia(r['color'], badge=False)} -> temporada {r['season_number']}  (desde {r['source']})")
+            return 0
+        if args[:1] == ["--cancel"]:
+            if len(args) != 2:
+                print("Uso: addai --cancel #color", file=sys.stderr)
+                return 2
+            r = additions.cancel_addition(db, cfg, args[1])
+            print(f"Quitada {r['color']} de la temporada {r['season']}.")
+            return 0
+        res = additions.register_additions(db, cfg, args)
+        f = res["format"]
+        for a in res["added"]:
+            print(f"  Añadida {out.ia(a['color'], badge=False)}  (desde {a['source']})")
+        gs = "/".join(map(str, f["group_sizes"]))
+        print(f"La temporada {res['target']} tendrá {f['teams']} equipos ({res['total_extra']} añadida(s)): "
+              f"Liga de {f['league_matchdays']} fechas ({f['games_per_team']} partidas por IA"
+              f"{', una IA descansa en cada fecha' if f['teams'] % 2 else ''}), grupos de Copa de {gs} "
+              f"(quedan fuera {'/'.join(map(str, f['group_eliminated']))}). La temporada {res['target'] + 1} vuelve a tener 20.")
+        return 0
+    except additions.AdditionError as e:
+        print(f"No se pudo añadir: {e}", file=sys.stderr)
+        return 1
+    finally:
+        db.close()
+
+
 def cmd_prune(cfg, dry_run: bool) -> int:
     db = Database(cfg.database_url, cfg.db_retries, cfg.db_retry_base_delay)
     out = Display(cfg.color)
@@ -108,7 +225,7 @@ def cmd_menu(cfg) -> int:
             try:
                 choice, args = parse_menu_line(input("Opción: "))
                 n = _positive_int(args)
-                if args and n is None:
+                if choice in ("2", "3", "4") and args and n is None:
                     print("El argumento debe ser un número entero positivo (ej.: 3 100).")
                     continue
                 if choice == "1":
@@ -127,6 +244,16 @@ def cmd_menu(cfg) -> int:
                     reports.render_champions(conn, out, n or cfg.champions_top)
                 elif choice == "4":
                     cmd_play(cfg, n)
+                elif choice == "5":
+                    cmd_fight(cfg, args or input("IA 1 y IA 2 (temporada o #color): ").split())
+                elif choice == "6":
+                    cmd_testleague(cfg, args or input("IA a probar (temporada o #color, separadas por espacio): ").split())
+                elif choice == "7":
+                    if not args:
+                        cmd_addai(cfg, ["--list"])
+                        args = shlex.split(input("Archivo .pth a añadir (ruta o nombre dentro de models/): "))
+                    if args:
+                        cmd_addai(cfg, args)
                 elif choice in ("0", "q"):
                     return
                 elif choice:
@@ -160,6 +287,15 @@ def main(argv: list[str] | None = None) -> int:
             print("Uso: python -m evolution play [N]", file=sys.stderr)
             return 2
         return cmd_play(cfg, n)
+    if cmd == "fight":
+        return cmd_fight(cfg, argv[1:])
+    if cmd == "testleague":
+        return cmd_testleague(cfg, argv[1:])
+    if cmd == "addai":
+        if len(argv) < 2:
+            print("Uso: python -m evolution addai archivo.pth [otro.pth ...] | --list | --cancel #color", file=sys.stderr)
+            return 2
+        return cmd_addai(cfg, argv[1:])
     if cmd == "prune":
         return cmd_prune(cfg, "--dry-run" in argv[1:])
     if cmd == "menu":

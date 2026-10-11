@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from . import rules
 from .rng import derive_rng, derive_seed
 
-MATCHDAY_RECOPA = rules.LEAGUE_MATCHDAYS + 1
 
 
 @dataclass
@@ -21,6 +20,7 @@ class SeasonInfo:
     id: int
     number: int
     seed: int
+    league_matchdays: int = rules.LEAGUE_MATCHDAYS           # 38 con 20 equipos; más con IA añadidas
     color_of: dict[int, str] = field(default_factory=dict)  # id individuo -> color
     id_of: dict[str, int] = field(default_factory=dict)     # color -> id individuo
 
@@ -33,7 +33,9 @@ def load_season_info(conn, season_row) -> SeasonInfo:
         """SELECT i.id, i.color FROM season_participants p JOIN individuals i ON i.id = p.individual_id
            WHERE p.season_id=%s ORDER BY p.slot""", (season_row["id"],)).fetchall()
     return SeasonInfo(season_row["id"], season_row["number"], season_row["seed"],
+                      season_row.get("league_matchdays") or rules.LEAGUE_MATCHDAYS,
                       {r["id"]: r["color"] for r in rows}, {r["color"]: r["id"] for r in rows})
+
 
 
 def persist_draws(conn, s: SeasonInfo, draws: list[rules.DrawRecord]) -> None:
@@ -138,18 +140,18 @@ def league_table_snapshot(conn, s: SeasonInfo, md: int) -> list[dict]:
 
 
 def finish_league(conn, s: SeasonInfo) -> list[dict]:
-    """Clasificación definitiva tras la fecha 38 (con desempates) y recompensa evolutiva."""
+    """Clasificación definitiva tras la última fecha de Liga (con desempates) y recompensa evolutiva."""
     season = conn.execute("SELECT * FROM seasons WHERE id=%s", (s.id,)).fetchone()
     if season["stage"] != "league_cup":
         return []
-    if season["current_matchday"] != rules.LEAGUE_MATCHDAYS:
+    if season["current_matchday"] != s.league_matchdays:
         raise RuntimeError("La Liga no ha terminado")
     if season["cup_champion_id"] is None:
         raise RuntimeError("La Copa no ha terminado (la final es en la fecha 37)")
     hist = defaultdict(dict)
     for r in conn.execute("SELECT matchday, individual_id, points FROM league_history WHERE season_id=%s", (s.id,)):
         hist[s.color_of[r["individual_id"]]][r["matchday"]] = r["points"]
-    history = {c: [hist[c][d] for d in range(1, rules.LEAGUE_MATCHDAYS + 1)] for c in s.id_of}
+    history = {c: [hist[c][d] for d in range(1, s.league_matchdays + 1)] for c in s.id_of}
     final_points = {c: history[c][-1] for c in s.id_of}
     draws: list[rules.DrawRecord] = []
     order = rules.league_final_order(list(s.id_of), final_points, history, s.rng_factory(), draws)
@@ -158,7 +160,7 @@ def finish_league(conn, s: SeasonInfo) -> list[dict]:
         conn.execute(
             """UPDATE season_participants SET league_points=%s, league_played=%s, league_position=%s, league_score=%s
                WHERE season_id=%s AND individual_id=%s""",
-            (final_points[c], rules.LEAGUE_MATCHDAYS, pos, rules.LEAGUE_REWARD[pos - 1], s.id, s.id_of[c]))
+            (final_points[c], 2 * (len(s.id_of) - 1), pos, rules.league_reward(pos), s.id, s.id_of[c]))
     conn.execute("UPDATE seasons SET league_champion_id=%s, stage='recopa' WHERE id=%s", (s.id_of[order[0]], s.id))
     return [{"type": "league_final", "order": order, "points": final_points, "draws": [d.context for d in draws]}]
 
@@ -202,7 +204,7 @@ def _resolve_groups(conn, s: SeasonInfo) -> list[dict]:
                    ON CONFLICT DO NOTHING""",
                 (s.id, g, s.id_of[p], pos, t.played, t.wins, t.draws, t.losses, t.points, pos <= 4))
             pos_to_color[f"{pos}{g}"] = p
-            if pos == 5:
+            if pos > 4:   # grupos de 5, 6, 7 u 8: clasifican 4, el resto queda eliminado
                 conn.execute("UPDATE season_participants SET cup_stage='group', cup_score=%s WHERE season_id=%s AND individual_id=%s",
                              (rules.CUP_REWARD["group"], s.id, s.id_of[p]))
     persist_draws(conn, s, draws)
@@ -311,7 +313,7 @@ def setup_recopa(conn, s: SeasonInfo) -> list[dict]:
         conn.execute(
             """INSERT INTO matches (season_id, competition, matchday, round_no, seq, x_individual_id, o_individual_id)
                VALUES (%s,'recopa',%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
-            (s.id, MATCHDAY_RECOPA, 1, g, x, o))
+            (s.id, s.league_matchdays + 1, 1, g, x, o))
     return [{"type": "recopa_scheduled", "cup": s.color_of[cup], "league": s.color_of[league]}]
 
 

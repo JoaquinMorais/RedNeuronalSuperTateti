@@ -38,27 +38,42 @@ def double_round_robin(n_teams: int) -> list[list[tuple[int, int]]]:
     return first + second
 
 
-def league_fixtures() -> list[list[tuple[int, int]]]:
-    """38 fechas x 10 partidos. Pares de slots 1..20: (slot que comienza, slot que responde)."""
-    rounds = double_round_robin(rules.POPULATION)
+def league_fixtures(n_teams: int = rules.POPULATION) -> list[list[tuple[int, int]]]:
+    """Fechas de Liga. Pares de slots 1..n: (slot que comienza, slot que responde).
+
+    n=20 -> 38 fechas x 10 partidos. Con n impar descansa una IA por fecha (2·n fechas)."""
+    rounds = double_round_robin(n_teams)
     return [[(a + 1, b + 1) for a, b in rnd] for rnd in rounds]
 
 
-def group_fixtures() -> list[tuple[int, list[tuple[int, int]]]]:
-    """Fixture de un grupo de 5 (posiciones 0..4): 10 rondas de 2 partidos.
+def group_round_matchdays(rounds_per_leg: int) -> list[int]:
+    """Fechas de Liga de las rondas de un grupo: la ida en 1..L, una fecha de margen, la vuelta en L+2..2L+1
+    (y el resto, hasta la fecha 17, queda de margen antes de los octavos). Con L=5 son las fechas 1-5 y 7-11."""
+    L = rounds_per_leg
+    return list(range(1, L + 1)) + list(range(L + 2, 2 * L + 2))
 
-    Devuelve [(fecha_de_liga, [(x, o), ...]), ...] usando ``rules.GROUP_ROUND_MATCHDAYS``.
-    """
-    rounds = double_round_robin(5)
-    assert len(rounds) == len(rules.GROUP_ROUND_MATCHDAYS) == 10
-    return [(md, rnd) for md, rnd in zip(rules.GROUP_ROUND_MATCHDAYS, rounds)]
+
+def group_fixtures(size: int = 5) -> list[tuple[int, list[tuple[int, int]]]]:
+    """Fixture de un grupo de ``size`` equipos (posiciones 0..size-1), ida y vuelta.
+
+    Devuelve [(fecha_de_liga, [(x, o), ...]), ...]. Con 5 o 6 equipos son 10 rondas (fechas 1-12);
+    con 7 u 8, 14 rondas (fechas 1-15)."""
+    rounds = double_round_robin(size)
+    mds = group_round_matchdays(len(rounds) // 2)
+    assert len(mds) == len(rounds) and mds[-1] < rules.KNOCKOUT_MATCHDAYS["R16"]
+    return list(zip(mds, rounds))
 
 
 def draw_groups(pids: Sequence[str], rng: random.Random) -> dict[str, list[str]]:
-    """Sorteo de 4 grupos de 5. Parte de orden canónico para ser reproducible."""
+    """Sorteo de 4 grupos (A-D) con los tamaños de ``rules.season_format``. Parte de orden canónico (reproducible)."""
+    sizes = rules.season_format(len(pids))["group_sizes"]
     order = sorted(pids)
     rng.shuffle(order)
-    return {name: order[i * 5:(i + 1) * 5] for i, name in enumerate("ABCD")}
+    out, i = {}, 0
+    for name, size in zip("ABCD", sizes):
+        out[name] = order[i:i + size]
+        i += size
+    return out
 
 
 def knockout_bracket() -> list[dict]:

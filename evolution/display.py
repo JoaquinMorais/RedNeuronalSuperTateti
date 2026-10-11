@@ -140,16 +140,20 @@ class Display:
     # -- resúmenes -------------------------------------------------------
     def header(self, *, season: dict, master_seed: int, cfg, db_status: str, progress: dict, resumed: bool) -> None:
         self.banner(f"TEMPORADA {season['number']} {'(REANUDADA)' if resumed else '(NUEVA)'}")
-        self.emit(f"  IA en la temporada      : 20")
-        self.emit(f"  Etapa                   : {season['stage']}  (última fecha cerrada: {season['current_matchday']}/38)")
-        self.emit(f"  Competiciones           : Liga (38 fechas) · Copa (grupos f1-12, octavos f18, cuartos f23, semis f30, final f37) · Recopa (tras f38)")
+        n, md_total = season.get("n_participants") or 20, season.get("league_matchdays") or 38
+        extra = f"  ({n - 20} IA añadida{'s' if n - 20 != 1 else ''} a la generación normal)" if n != 20 else ""
+        self.emit(f"  IA en la temporada      : {n}{extra}")
+        self.emit(f"  Etapa                   : {season['stage']}  (última fecha cerrada: {season['current_matchday']}/{md_total})")
+        sizes = (season.get("draw_meta") or {}).get("format", {}).get("group_sizes", [5, 5, 5, 5])
+        self.emit(f"  Competiciones           : Liga ({md_total} fechas, {2 * (n - 1)} partidas por IA) · Copa (grupos de "
+                  f"{'/'.join(map(str, sizes))}, octavos f18, cuartos f23, semis f30, final f37) · Recopa (tras f{md_total})")
         self.emit(f"  Directorio de modelos   : {cfg.models_dir}")
         self.emit(f"  Base de datos           : {db_status}")
         self.emit(f"  Semilla maestra/temporada: {master_seed} / {season['seed']}")
         self.emit(f"  Partidas                : {progress['done']} jugadas · {progress['pending']} pendientes (programadas)")
 
-    def matchday_header(self, md: int, pending: int) -> None:
-        self.banner(f"FECHA {md} / 38")
+    def matchday_header(self, md: int, pending: int, total: int = 38) -> None:
+        self.banner(f"FECHA {md} / {total}")
         self.emit(f"  Partidas por jugar en esta fecha: {pending}")
 
     def matchday_footer(self, md: int, wall_ms: float, game_ms: float, prog: dict, season_ms: float) -> None:

@@ -106,8 +106,13 @@ def materialize_models(db, cfg: Config) -> list[int]:
         meta = r["mutation_meta"]
         if r["kind"] == "founder_seed":
             sd = modelstore.load_state_dict(Path(meta["source"]), meta["source_weights_sha256"])
+        elif r["kind"] == "imported":
+            src = Path(meta["source"])
+            if not src.exists():
+                raise FileNotFoundError(f"No se encuentra el archivo de la IA añadida: {src}")
+            sd = modelstore.load_state_dict(src, meta["source_weights_sha256"])
         elif r["kind"] == "founder_random":
-            with torch.random.fork_rng():
+            with torch.random.fork_rng(devices=[]):
                 torch.manual_seed(r["mutation_seed"])
                 sd = SuperTatetiNet().state_dict()
         else:
@@ -143,7 +148,9 @@ def create_season(conn, cfg: Config, number: int, seed: int, individual_ids: lis
     existing = conn.execute("SELECT id FROM seasons WHERE number=%s", (number,)).fetchone()
     if existing:
         return existing["id"]
-    assert len(individual_ids) == rules.POPULATION == len(set(individual_ids))
+    n = len(individual_ids)
+    assert n == len(set(individual_ids))
+    fmt = rules.season_format(n)       # 20 = normal; 21+ = IA añadidas (Liga más larga, grupos más grandes)
     rows = conn.execute("SELECT id, color FROM individuals WHERE id = ANY(%s)", (individual_ids,)).fetchall()
     id_by_color = {r["color"]: r["id"] for r in rows}
     colors = list(id_by_color)
@@ -155,8 +162,10 @@ def create_season(conn, cfg: Config, number: int, seed: int, individual_ids: lis
     group_of = {c: g for g, members in groups.items() for c in members}
 
     sid = conn.execute(
-        """INSERT INTO seasons (number, seed, draw_meta, config) VALUES (%s,%s,%s::jsonb,%s::jsonb) RETURNING id""",
-        (number, seed, json.dumps({"slots": slot_of, "groups": groups}), json.dumps(cfg.snapshot())),
+        """INSERT INTO seasons (number, seed, draw_meta, config, n_participants, league_matchdays)
+           VALUES (%s,%s,%s::jsonb,%s::jsonb,%s,%s) RETURNING id""",
+        (number, seed, json.dumps({"slots": slot_of, "groups": groups, "format": fmt}), json.dumps(cfg.snapshot()),
+         n, fmt["league_matchdays"]),
     ).fetchone()["id"]
 
     with conn.cursor() as cur:
@@ -166,14 +175,16 @@ def create_season(conn, cfg: Config, number: int, seed: int, individual_ids: lis
 
         slot_to_id = {slot_of[c]: id_by_color[c] for c in colors}
         match_rows = []
-        for md, pairs in enumerate(schedule.league_fixtures(), start=1):
+        half = fmt["league_matchdays"] // 2
+        for md, pairs in enumerate(schedule.league_fixtures(n), start=1):
             for xs, os_ in pairs:
-                match_rows.append((sid, "league", md, md, None, None, 1 if md <= 19 else 2,
+                match_rows.append((sid, "league", md, md, None, None, 1 if md <= half else 2,
                                    slot_to_id[xs], slot_to_id[os_]))
         for g, members in groups.items():
-            for rnd_idx, (md, pairs) in enumerate(schedule.group_fixtures()):
+            fixtures = schedule.group_fixtures(len(members))
+            for rnd_idx, (md, pairs) in enumerate(fixtures):
                 for xi, oi in pairs:
-                    match_rows.append((sid, "cup_group", md, rnd_idx + 1, g, None, 1 if rnd_idx < 5 else 2,
+                    match_rows.append((sid, "cup_group", md, rnd_idx + 1, g, None, 1 if rnd_idx < len(fixtures) // 2 else 2,
                                        id_by_color[members[xi]], id_by_color[members[oi]]))
         cur.executemany(
             """INSERT INTO matches (season_id, competition, matchday, round_no, group_name, tie_id, seq,

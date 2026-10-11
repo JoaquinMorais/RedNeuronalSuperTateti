@@ -178,3 +178,38 @@ CREATE TABLE IF NOT EXISTS historical_best (
 
 -- Migración idempotente: fecha en que se borró el .pth de un modelo antiguo (el .json y la fila se conservan)
 ALTER TABLE individuals ADD COLUMN IF NOT EXISTS model_pruned_at TIMESTAMPTZ;
+
+-- Temporadas con IA añadidas (21+ equipos): formato por temporada
+ALTER TABLE seasons ADD COLUMN IF NOT EXISTS n_participants INT NOT NULL DEFAULT 20;
+ALTER TABLE seasons ADD COLUMN IF NOT EXISTS league_matchdays INT NOT NULL DEFAULT 38;
+
+DO $$ BEGIN
+  -- slot: ya no limitado a 1..20
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'season_participants_slot_check'
+             AND conrelid = 'season_participants'::regclass) THEN
+    ALTER TABLE season_participants DROP CONSTRAINT season_participants_slot_check;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'season_participants_slot_range'
+                 AND conrelid = 'season_participants'::regclass) THEN
+    ALTER TABLE season_participants ADD CONSTRAINT season_participants_slot_range CHECK (slot BETWEEN 1 AND 64);
+  END IF;
+  -- kind: nuevo valor 'imported' (IA añadida a mano)
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'individuals_kind_check'
+             AND conrelid = 'individuals'::regclass) THEN
+    ALTER TABLE individuals DROP CONSTRAINT individuals_kind_check;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'individuals_kind_values'
+                 AND conrelid = 'individuals'::regclass) THEN
+    ALTER TABLE individuals ADD CONSTRAINT individuals_kind_values
+        CHECK (kind IN ('founder_seed','founder_random','mutant','imported'));
+  END IF;
+END $$;
+
+-- IA añadidas a mano para una temporada futura
+CREATE TABLE IF NOT EXISTS season_additions (
+    id            SERIAL PRIMARY KEY,
+    season_number INT  NOT NULL,                        -- temporada en la que competirá
+    individual_id INT  NOT NULL UNIQUE REFERENCES individuals(id),
+    source        TEXT NOT NULL,                        -- archivo original
+    added_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);

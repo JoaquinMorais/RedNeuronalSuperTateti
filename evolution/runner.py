@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from . import competitions as comp
-from . import evolve, modelstore, prune, repo, reports, rules
+from . import additions, evolve, modelstore, prune, repo, reports, rules
 from .config import Config
 from .db import Database
 from .display import ROUND_NAME, Display
@@ -67,7 +67,8 @@ class Trainer:
                     break
         except Interrupted:
             st = self.db.run(repo.get_incomplete_season)
-            where = f"temporada {st['number']}, última fecha cerrada {st['current_matchday']}/38" if st else "entre temporadas"
+            where = (f"temporada {st['number']}, última fecha cerrada {st['current_matchday']}/{st['league_matchdays']}"
+                     if st else "entre temporadas")
             self.out.emit(f"\nDetención solicitada: estado guardado ({where}). Se reanudará al reiniciar.")
         finally:
             self.db.close()
@@ -86,13 +87,17 @@ class Trainer:
             seed_hash = modelstore.weights_hash(modelstore.load_state_dict(cfg.seed_model_path))
 
         def tx(conn):
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (additions.ADD_LOCK_KEY,))  # serializa con `addai`
             if nxt is None:
                 number = 1
                 if conn.execute("SELECT 1 FROM seasons WHERE number=1").fetchone() is None:
                     ids = repo.bootstrap_population(conn, cfg, master, seed_hash)
+                    ids += additions.pending_ids(conn, number)
                     repo.create_season(conn, cfg, number, derive_seed(master, "season", number), ids)
             else:
                 number, ids = nxt
+                if conn.execute("SELECT 1 FROM seasons WHERE number=%s", (number,)).fetchone() is None:
+                    ids = ids + additions.pending_ids(conn, number)   # IA añadidas a mano para esta temporada
                 repo.create_season(conn, cfg, number, derive_seed(master, "season", number), ids)
             return conn.execute("SELECT * FROM seasons WHERE number=%s", (number,)).fetchone()
 
@@ -141,19 +146,19 @@ class Trainer:
     # -- etapas --------------------------------------------------------
     def _stage_league_cup(self, info: comp.SeasonInfo) -> None:
         start = self.db.run(lambda c: c.execute("SELECT current_matchday FROM seasons WHERE id=%s", (info.id,)).fetchone())["current_matchday"]
-        for md in range(start + 1, rules.LEAGUE_MATCHDAYS + 1):
+        for md in range(start + 1, info.league_matchdays + 1):
             self._play_matchday(info, md)
         for ev in self.db.run(lambda c: comp.finish_league(c, info)):
             self.out.section("Liga terminada: clasificación definitiva (con desempates)")
             for pos, color in enumerate(ev["order"], start=1):
-                self.out.emit(f"  {pos:>2}. {self.out.ia(color)}  {ev['points'][color]} pts  -> {rules.LEAGUE_REWARD[pos - 1]:+d} puntos evolutivos")
+                self.out.emit(f"  {pos:>2}. {self.out.ia(color)}  {ev['points'][color]} pts  -> {rules.league_reward(pos):+d} puntos evolutivos")
             if ev["draws"]:
                 self.out.emit(self.out.dim(f"  Desempates por sorteo reproducible: {', '.join(ev['draws'])}"))
 
     def _stage_recopa(self, info: comp.SeasonInfo) -> None:
         for ev in self.db.run(lambda c: comp.setup_recopa(c, info)):
             self.out.event(ev)
-        self._play_pending(info, comp.MATCHDAY_RECOPA, label_info=lambda m: f"#{m['seq']}")
+        self._play_pending(info, info.league_matchdays + 1, label_info=lambda m: f"#{m['seq']}")
         for ev in self.db.run(lambda c: comp.finish_recopa(c, info)):
             self.out.event(ev)
 
@@ -212,7 +217,7 @@ class Trainer:
     def _play_matchday(self, info: comp.SeasonInfo, md: int) -> None:
         t0 = time.perf_counter()
         n = len(self.db.run(lambda c: comp.fetch_pending(c, info.id, md)))
-        self.out.matchday_header(md, n)
+        self.out.matchday_header(md, n, info.league_matchdays)
         game_ms = self._play_pending(info, md)
         self.db.run(lambda c: comp.close_matchday(c, info, md))
         rows = self.db.run(lambda c: comp.league_table_snapshot(c, info, md))

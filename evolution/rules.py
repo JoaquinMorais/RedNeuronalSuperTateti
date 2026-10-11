@@ -16,6 +16,9 @@ LEAGUE_MATCHDAYS = 38
 RECOPA_GAMES = 10
 RECOPA_BONUS = 5
 
+# Temporadas con IA añadidas: hasta 12 extra (grupos de 8 como máximo; con más no entrarían las rondas antes de los octavos)
+MAX_EXTRA_TEAMS = 12
+
 # Puntos de PARTIDO (tabla de Liga y grupos de Copa)
 WIN_POINTS, DRAW_POINTS, LOSS_POINTS = 3, 1, 0
 
@@ -43,6 +46,32 @@ R16_CROSSINGS = [
     ("1A", "4B"), ("2A", "3B"), ("3A", "2B"), ("4A", "1B"),
     ("1C", "4D"), ("2C", "3D"), ("3C", "2D"), ("4C", "1D"),
 ]
+
+def season_format(n_teams: int) -> dict:
+    """Formato de una temporada con ``n_teams`` equipos (20 = normal; más = IA añadidas).
+
+    * Liga: todos contra todos ida y vuelta (2·(n-1) partidas por IA). Una IA juega una partida por
+      fecha, así que hacen falta 2·(n-1) fechas si n es par y 2·n si es impar (en cada fecha descansa 1 IA).
+    * Copa: 4 grupos; los 4 primeros de cada uno clasifican. Las IA extra se reparten de a una por grupo
+      (A, B, C, D, A, ...), así 1 extra => A de 6; 3 extra => A, B y C de 6; 6 extra => A y B de 7, C y D de 6.
+    """
+    extra = n_teams - POPULATION
+    if not 0 <= extra <= MAX_EXTRA_TEAMS:
+        raise ValueError(f"Una temporada admite entre {POPULATION} y {POPULATION + MAX_EXTRA_TEAMS} equipos (recibido {n_teams})")
+    sizes = [5 + extra // 4 + (1 if i < extra % 4 else 0) for i in range(4)]
+    return {
+        "teams": n_teams,
+        "league_matchdays": 2 * (n_teams - 1) if n_teams % 2 == 0 else 2 * n_teams,
+        "games_per_team": 2 * (n_teams - 1),
+        "group_sizes": sizes,
+        "group_eliminated": [g - 4 for g in sizes],
+    }
+
+
+def league_reward(position: int) -> int:
+    """Recompensa evolutiva por posición final en Liga. Más allá del 20.º (temporadas con IA añadidas): -3."""
+    return LEAGUE_REWARD[position - 1] if position <= len(LEAGUE_REWARD) else LEAGUE_REWARD[-1]
+
 
 X, O, DRAW = "x", "o", "draw"  # resultado de una partida (X = quien comienza)
 

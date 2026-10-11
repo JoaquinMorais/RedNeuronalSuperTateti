@@ -68,6 +68,23 @@ Equivalentes directos: `python -m evolution champions 100`, `python -m evolution
 - **Ranking de campeones**: ahora tiene la columna *Estado*: `compitiendo`, o `expulsada T7` (la temporada en la que no pasó a la siguiente generación).
 - **Jugar**: la opción 4 abre una página en `http://localhost:8765` (tablero 9x9, tablero activo resaltado, tus jugadas y las de la IA marcadas, marcador de la sesión; podés empezar vos o la IA). La IA juega igual que en los torneos (mejor movimiento legal de su red, sin MCTS). Ctrl+C vuelve al menú. Si el puerto está ocupado, `PLAY_PORT=9000`.
 
+## Pelear entre IA, liga de prueba y añadir IA (menú 5, 6 y 7)
+Las IA se indican con un **número de temporada** (= el 1.º de su tabla anual) o con su **color** (`#ffffff`; también vale sin `#`, porque la shell toma `#...` como comentario). Un color solo sirve si el `.pth` de esa IA sigue guardado (ver limpieza de modelos).
+
+| Menú / comando | Qué hace |
+|---|---|
+| `5 1 311` · `fight 1 #ffffff` | **Pelea**: dos IA juegan una partida de ida y vuelta (comienza una, luego la otra). Gana quien suma más puntos (3/1/0). |
+| `6 1 311 #ffffff` · `testleague 1 311 seed=5` | **Liga de prueba** (20 equipos, ida y vuelta, **no se guarda**): tus IA + redes aleatorias hasta llegar a 20 (con 2 IA, 18 aleatorias). Muestra la tabla y un resumen por IA (puesto, puntos, récord contra aleatorias y entre las probadas). `seed=N` repite exactamente lo mismo. |
+| `7 models/mi_ia.pth` · `addai a.pth b.pth` | **Añadir IA a la próxima temporada**. Ruta o nombre (se busca también dentro de `models/`; con espacios, entre comillas). `7 --list` muestra las pendientes y `7 --cancel #abc123` quita una (solo antes de que se cree esa temporada). Se puede usar mientras se entrena. |
+
+**Qué cambia en una temporada con IA añadidas** (solo esa; la siguiente vuelve a 20 y la composición sigue siendo 7 supervivientes + 13 descendientes, vengan o no de las añadidas):
+- Si se está jugando la temporada 312, la IA entra en la 313 (siempre en la temporada siguiente a la última creada).
+- **Liga**: igual, con más partidas: con N equipos cada IA juega 2·(N-1) (21 equipos → 40 partidas por IA). Como una IA juega una partida por fecha, las fechas son 2·(N-1) si N es par y 2·N si es impar (21 y 22 equipos → 42 fechas; con N impar descansa una IA en cada fecha). La Recopa se juega tras la última fecha.
+- **Copa**: solo cambia la fase de grupos. Las IA extra se reparten de a una por grupo (A, B, C, D, A...): 1 extra → A de 6 · 3 extra → A, B y C de 6 y D de 5 · 6 extra → A y B de 7, C y D de 6. Siempre clasifican 4 por grupo (los demás quedan fuera) y el cuadro es el mismo de 16. Los grupos de 5 y 6 se juegan en las fechas 1-12; los de 7 y 8 necesitan 14 rondas y usan hasta la fecha 15 (siempre antes de los octavos).
+- **Recompensa de Liga** para posiciones más allá de la 20.ª: -3.
+- Máximo 12 IA añadidas por temporada.
+- Cada IA añadida recibe un color nuevo y único y se guarda como `models/<color>.pth` + `.json` (`kind: imported`). Si queda entre las 7 primeras, se conserva y puede tener hijos como cualquier otra.
+
 ## Limpieza de modelos (espacio en disco)
 Después de cada temporada se borra el `.pth` de las IA que cumplan **todo** esto:
 1. fueron expulsadas (no pasaron a la siguiente generación) hace `MODEL_RETENTION_SEASONS` temporadas o más (por defecto **10**; `0` desactiva la limpieza);

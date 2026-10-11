@@ -51,13 +51,20 @@ def titles_through(conn, upto: int | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # Estado de las temporadas (+ campeones)
 # ---------------------------------------------------------------------------
+def _md_total(season_row) -> int:
+    """Fechas de Liga de la temporada (38 en las de 20 equipos; BD antiguas sin la columna = 38)."""
+    return season_row.get("league_matchdays") or 38
+
+
 def render_status(conn, out: Display) -> None:
     champs = {r["number"]: r for r in champion_rows(conn)}
-    seasons = conn.execute("SELECT number, status, stage, current_matchday FROM seasons ORDER BY number").fetchall()
+    seasons = conn.execute("SELECT * FROM seasons ORDER BY number").fetchall()
     if not seasons:
         out.emit("Todavía no hay temporadas.")
     for s in seasons:
-        line = f"Temporada {s['number']}: {s['status']} · etapa {s['stage']} · fecha cerrada {s['current_matchday']}/38"
+        line = f"Temporada {s['number']}: {s['status']} · etapa {s['stage']} · fecha cerrada {s['current_matchday']}/{_md_total(s)}"
+        if (s.get("n_participants") or 20) != 20:
+            line += f" · {s['n_participants']} equipos"
         c = champs.get(s["number"])
         if c:
             line += (f" · Liga: {out.ia(c['league'], badge=False)} · Copa: {out.ia(c['cup'], badge=False)}"
@@ -184,7 +191,12 @@ def render_season(conn, out: Display, number: int) -> bool:
     color = {r["id"]: r["color"] for r in conn.execute("SELECT id, color FROM individuals")}
     parts = conn.execute("SELECT * FROM season_participants WHERE season_id=%s", (s["id"],)).fetchall()
     sid = s["id"]
-    out.banner(f"TEMPORADA {number} · {s['status']} · etapa {s['stage']} · fecha cerrada {s['current_matchday']}/38")
+    out.banner(f"TEMPORADA {number} · {s['status']} · etapa {s['stage']} · fecha cerrada {s['current_matchday']}/{_md_total(s)}")
+    total_md = _md_total(s)
+    if len(parts) != 20:
+        sizes = (s["draw_meta"] or {}).get("format", {}).get("group_sizes")
+        out.emit(f"  {len(parts)} equipos (IA añadidas): Liga de {total_md} fechas y {2 * (len(parts) - 1)} partidas por IA"
+                 + (f" · grupos de Copa de {'/'.join(map(str, sizes))}" if sizes else ""))
 
     # --- Liga ---------------------------------------------------------
     last_md = conn.execute("SELECT max(matchday) m FROM league_history WHERE season_id=%s", (sid,)).fetchone()["m"]
@@ -195,7 +207,7 @@ def render_season(conn, out: Display, number: int) -> bool:
     else:
         hist = {r["individual_id"]: r for r in conn.execute(
             "SELECT * FROM league_history WHERE season_id=%s AND matchday=%s", (sid, last_md))}
-        final = s["current_matchday"] >= 38 and all(p["league_position"] for p in parts)
+        final = s["current_matchday"] >= total_md and all(p["league_position"] for p in parts)
         order = (sorted(parts, key=lambda p: p["league_position"]) if final
                  else sorted(parts, key=lambda p: hist[p["individual_id"]]["position"]))
         out.section("Tabla de Liga" + ("" if final else f" (provisional, tras la fecha {last_md})"))
@@ -237,7 +249,7 @@ def render_season(conn, out: Display, number: int) -> bool:
     out.section("Recopa")
     rec = conn.execute("SELECT * FROM recopa_results WHERE season_id=%s", (sid,)).fetchone()
     if rec is None:
-        out.emit("  Pendiente (se juega tras la fecha 38).")
+        out.emit(f"  Pendiente (se juega tras la fecha {total_md}).")
     elif rec["same_champion"]:
         out.emit(f"  Campeón: {out.ia(color[rec['champion_id']])} (ganó Liga y Copa: campeón sin jugar)")
     elif rec["champion_id"] is None:

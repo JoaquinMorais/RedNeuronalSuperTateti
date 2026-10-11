@@ -32,8 +32,8 @@ class Database:
       si el proceso muere o se corta la conexión.
     """
 
-    def __init__(self, url: str, retries: int = 8, base_delay: float = 0.5, schema: str | None = None):
-        self.url, self.retries, self.base_delay, self.schema = url, retries, base_delay, schema
+    def __init__(self, url: str, retries: int = 8, base_delay: float = 0.5, schema: str | None = None, lock: bool = True):
+        self.url, self.retries, self.base_delay, self.schema, self.lock = url, retries, base_delay, schema, lock
         self.conn: psycopg.Connection | None = None
         self.reconnections = 0
 
@@ -43,7 +43,7 @@ class Database:
         conn = psycopg.connect(self.url, autocommit=True, row_factory=dict_row)
         if self.schema:
             conn.execute(f'SET search_path TO "{self.schema}"')
-        ok = conn.execute("SELECT pg_try_advisory_lock(%s) AS ok", (ADVISORY_LOCK_KEY,)).fetchone()["ok"]
+        ok = (not self.lock) or conn.execute("SELECT pg_try_advisory_lock(%s) AS ok", (ADVISORY_LOCK_KEY,)).fetchone()["ok"]
         if not ok:
             conn.close()
             raise AlreadyRunningError("Otro entrenamiento está activo sobre esta base de datos")
