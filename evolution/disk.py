@@ -64,7 +64,7 @@ def collect(conn, cfg: Config) -> dict:
                                                            WHERE e.season_id = s.id AND e.individual_id = i.id)) AS expelled,
                    {prune.PROTECTED_SQL} AS protected
             FROM individuals i LEFT JOIN last l ON l.individual_id = i.id LEFT JOIN seasons s ON s.number = l.last_season
-            WHERE i.model_sha256 IS NOT NULL""", {"every": cfg.protect_every}).fetchall()
+            WHERE i.model_sha256 IS NOT NULL AND i.ia_type = 'neuronal'""", {"every": cfg.protect_every}).fetchall()
     cats = {"compitiendo": [0, 0], "conservadas (campeones / 1.º)": [0, 0], "en ventana (se borran luego)": [0, 0],
             "borrables ya": [0, 0], "sin competir aún": [0, 0]}
     for r in rows:

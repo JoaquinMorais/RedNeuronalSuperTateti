@@ -23,6 +23,13 @@ from .rng import derive_rng, derive_seed
 # ---------------------------------------------------------------------------
 # meta / semilla maestra
 # ---------------------------------------------------------------------------
+# La mejor RED de cada temporada (alias ``p`` = season_participants). Los estáticos no cuentan: las referencias por
+# número de temporada ("1 311") siempre resuelven a la mejor red; un estático solo se invoca por su nombre.
+BEST_NEURAL_SQL = ("p.final_position = (SELECT min(q2.final_position) FROM season_participants q2 "
+                   "JOIN individuals i2 ON i2.id = q2.individual_id "
+                   "WHERE q2.season_id = p.season_id AND i2.ia_type = 'neuronal')")
+
+
 def get_master_seed(conn, requested: int | None) -> int:
     row = conn.execute("SELECT value FROM meta WHERE key='master_seed'").fetchone()
     if row:
@@ -40,15 +47,24 @@ def all_colors(conn) -> set[str]:
 
 
 def insert_individual(conn, *, color, origin_season, parent_id, kind, level=None, seed=None,
-                      mutation_meta=None, color_meta=None) -> int:
+                      mutation_meta=None, color_meta=None, ia_type="neuronal", static_name=None, static_color2=None,
+                      static_slug=None, static_code_sha256=None) -> int:
+    """Crea un individuo. Las redes quedan con ``model_sha256`` NULL hasta escribir su archivo; un estático no
+    tiene archivo de pesos (``model_file`` = 'static:<slug>') y su ``model_sha256`` es el hash de su código."""
+    static = ia_type == "estatico"
     row = conn.execute(
-        """INSERT INTO individuals (color, origin_season, parent_id, kind, model_file, architecture,
+        """INSERT INTO individuals (color, origin_season, parent_id, kind, model_file, model_sha256, architecture,
                                     architecture_sig, mutation_level, mutation_seed, mutation_meta,
-                                    color_mutation_meta)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb) RETURNING id""",
-        (color, origin_season, parent_id, kind, modelstore.file_name_for(color),
-         modelstore.ARCHITECTURE_NAME, modelstore.architecture_signature(), level, seed,
-         json.dumps(mutation_meta or {}), json.dumps(color_meta or {})),
+                                    color_mutation_meta, ia_type, static_name, static_color2, static_slug,
+                                    static_code_sha256)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s,%s,%s) RETURNING id""",
+        (color, origin_season, parent_id, kind,
+         f"static:{static_slug}" if static else modelstore.file_name_for(color),
+         static_code_sha256 if static else None,
+         "static" if static else modelstore.ARCHITECTURE_NAME,
+         "static" if static else modelstore.architecture_signature(), level, seed,
+         json.dumps(mutation_meta or {}), json.dumps(color_meta or {}),
+         ia_type, static_name, static_color2, static_slug, static_code_sha256),
     ).fetchone()
     return row["id"]
 

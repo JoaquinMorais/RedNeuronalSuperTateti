@@ -1,11 +1,12 @@
 """Jugar contra una IA desde el navegador (servidor local mínimo, solo biblioteca estándar).
 
 La IA juega exactamente como en los torneos: elige el movimiento legal de mayor
-probabilidad según su red (``engine.select_move``), sin MCTS.
+probabilidad según su red (``engine.select_move``), sin MCTS; un bot estático juega con su propia lógica.
 """
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,8 +14,9 @@ from pathlib import Path
 from game import SuperTateti
 
 from . import modelstore, reports
+from .repo import BEST_NEURAL_SQL
 from . import titles as titlemod
-from .engine import select_move
+from .engine import choose_cell
 
 UI_FILE = Path(__file__).with_name("play_ui.html")
 MAX_BODY = 4096
@@ -41,7 +43,7 @@ def find_opponent(conn, models_dir: Path, season: int | None = None) -> dict:
     r = conn.execute(
         """SELECT i.color, i.model_file, i.model_sha256, p.total_score, p.league_score, p.cup_score, p.recopa_score
            FROM season_participants p JOIN individuals i ON i.id = p.individual_id
-           WHERE p.season_id=%s AND p.final_position=1""", (s["id"],)).fetchone()
+           WHERE p.season_id=%s AND """ + BEST_NEURAL_SQL, (s["id"],)).fetchone()
     path = models_dir / r["model_file"]
     if not path.exists():
         raise PlayError(f"El modelo {r['model_file']} no está en {models_dir}.")
@@ -76,6 +78,8 @@ class PlaySession:
             raise PlayError("Elegí X (1) u O (-1).")
         with self.lock:
             self.game, self.human = SuperTateti(), human
+            if hasattr(self.net, "reseed"):             # bot estático: cada partida con su propio azar
+                self.net.reseed(secrets.randbits(31))
             self.last_human = self.last_ai = None
             self._counted = False
             self._ai_turns()
@@ -106,12 +110,12 @@ class PlaySession:
     def _ai_turns(self) -> None:
         g = self.game
         while g.winner is None and g.current_player != self.human:
-            mv = select_move(self.net, g)
-            g.make_move(mv // 9, mv % 9)
-            self.last_ai = [mv // 9, mv % 9]
+            b, c = choose_cell(self.net, g)
+            g.make_move(b, c)
+            self.last_ai = [b, c]
 
     def _state(self) -> dict:
-        opp = {k: self.opponent[k] for k in ("season", "color", "tag", "total", "league", "cup", "recopa")}
+        opp = {k: self.opponent.get(k) for k in ("season", "color", "tag", "total", "league", "cup", "recopa", "static", "name", "color2")}
         if self.game is None:
             return {"started": False, "opponent": opp, "score": self.wins}
         g = self.game
@@ -186,7 +190,10 @@ def serve(session: PlaySession, host: str, port: int, emit=print) -> None:
     """Sirve hasta Ctrl+C (y vuelve al llamador)."""
     server = make_server(session, host, port)
     o = session.opponent
-    emit(f"\n  Rival: {o['tag']} · mejor de la tabla anual de la temporada {o['season']} ({o['total']} pts)")
+    if o.get("static"):
+        emit(f"\n  Rival: {o['tag']} · bot estático (lógica propia)")
+    else:
+        emit(f"\n  Rival: {o['tag']} · mejor de la tabla anual de la temporada {o['season']} ({o['total']} pts)")
     emit(f"  Abrí en el navegador:  http://localhost:{server.server_address[1]}")
     emit("  (Ctrl+C para terminar la partida y volver)")
     try:

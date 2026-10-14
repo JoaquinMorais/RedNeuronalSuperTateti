@@ -145,11 +145,11 @@ class PuzzleTrainer:
     """
 
     def __init__(self, net: SuperTatetiNet, lr: float = 3e-4, value_coef: float = 0.0,
-                 seed: int = 0, augment: bool = True):
+                 seed: int = 0, augment: bool = True, weight_decay: float = 0.0):
         self.net = net
         self.value_coef = value_coef
         self.augment = augment
-        self.optimizer = optim.Adam(net.parameters(), lr=lr)
+        self.optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
         self.rng = random.Random(seed)
         self.np_rng = np.random.default_rng(seed)
 
@@ -236,16 +236,29 @@ def _fmt_dur(seconds: float) -> str:
 # ----------------------------------------------------------------------
 # Generación de puzzles
 # ----------------------------------------------------------------------
+def _eval_seed(args) -> int:
+    """Semilla del set de EVALUACIÓN (``--eval-seed``), independiente de la de train.
+
+    Sirve para que el examen no cambie entre reintentos con datos nuevos (``--seed``
+    distinto) y las comparaciones sean justas.
+    """
+    return args.seed if getattr(args, "eval_seed", None) is None else args.eval_seed
+
+
 def generate_eval_set(n: int, args, exclude: set) -> list[Puzzle]:
     """Genera el set de evaluación fijo del nivel ``n`` y agrega sus claves a ``exclude``."""
     log_phase("[GEN]", f"evaluación mate en {n}...")
-    got = harvest({n: args.eval_size}, seed=args.seed + 1000 + n,
+    got = harvest({n: args.eval_size}, seed=_eval_seed(args) + 1000 + n,
                   min_turn=args.min_turn, solver_max_nodes=args.solver_max_nodes,
-                  games_budget=args.games_budget, should_stop=_STOP.is_set)
+                  games_budget=args.games_budget, max_games=args.max_games,
+                  should_stop=_STOP.is_set)
     ps = got.get(n, [])
     for p in ps:
         exclude.add(p.key)
     log_phase("[GEN]", f"  evaluación mate en {n}: {len(ps)}/{args.eval_size}")
+    if len(ps) < args.eval_size:
+        log_phase("[GEN]", f"  aviso: evaluación {n} incompleta ({len(ps)}/{args.eval_size}); "
+                           f"¿subir --max-games?")
     return ps
 
 
@@ -266,11 +279,25 @@ def generate_train_set(n: int, args, exclude: set) -> list[Puzzle]:
     log_phase("[GEN]", f"entrenamiento mate en {n}...")
     got = harvest({n: target}, seed=args.seed + 2000 + n, exclude=exclude,
                   min_turn=args.min_turn, solver_max_nodes=args.solver_max_nodes,
-                  games_budget=args.games_budget, log=prog, log_interval=2.0,
-                  should_stop=_STOP.is_set)
+                  games_budget=args.games_budget, max_games=args.max_games,
+                  log=prog, log_interval=2.0, should_stop=_STOP.is_set)
     ps = got.get(n, [])
     log_phase("[GEN]", f"  entrenamiento mate en {n}: {len(ps)}/{target}")
+    if len(ps) < target:
+        log_phase("[GEN]", f"  aviso: no se alcanzó el target de mate {n} ({len(ps)}/{target}); "
+                           f"¿subir --max-games?")
     return ps
+
+
+def load_net(init_path: Path, dropout: float = 0.0) -> SuperTatetiNet:
+    net = SuperTatetiNet(dropout=dropout)
+    if init_path.exists():
+        state = torch.load(init_path, weights_only=True, map_location="cpu")
+        net.load_state_dict(state)
+        log_print(f"Red inicializada desde {init_path}")
+    else:
+        log_print(f"No existe {init_path}: se entrena desde una red aleatoria")
+    return net
 
 
 def build_sets(args) -> tuple[dict[int, list[Puzzle]], dict[int, list[Puzzle]]]:
@@ -285,17 +312,6 @@ def build_sets(args) -> tuple[dict[int, list[Puzzle]], dict[int, list[Puzzle]]]:
     for n in range(1, args.levels + 1):
         train_sets[n] = generate_train_set(n, args, exclude)
     return eval_sets, train_sets
-
-
-def load_net(init_path: Path) -> SuperTatetiNet:
-    net = SuperTatetiNet()
-    if init_path.exists():
-        state = torch.load(init_path, weights_only=True, map_location="cpu")
-        net.load_state_dict(state)
-        log_print(f"Red inicializada desde {init_path}")
-    else:
-        log_print(f"No existe {init_path}: se entrena desde una red aleatoria")
-    return net
 
 
 def save_net(net: SuperTatetiNet, path: Path) -> None:
@@ -321,6 +337,7 @@ def train_level(net: SuperTatetiNet, trainer: PuzzleTrainer, args, level: int,
     mastered = False
     stopped = False
     capped = False
+    plateau_stopped = False
 
     while True:
         if _STOP.is_set():
@@ -340,7 +357,8 @@ def train_level(net: SuperTatetiNet, trainer: PuzzleTrainer, args, level: int,
         tr_acc = accuracy(net, probe)
         dt = time.time() - t0
 
-        if acc > best_acc:
+        improved = acc > best_acc
+        if improved:
             best_acc = acc
             best_state = clone_state(net)
             best_epoch = epoch
@@ -352,13 +370,15 @@ def train_level(net: SuperTatetiNet, trainer: PuzzleTrainer, args, level: int,
                               epoch, args.min_epochs, streak)
         mastered = streak >= args.patience
 
-        status = "MASTERED" if mastered else f"meta {args.threshold * 100:.0f}%"
-        log_phase("[TRAIN]",
-                  f"  N{level} ep {epoch:3d} | loss {loss:.3f} (P {ploss:.3f} V {vloss:.3f}) | "
-                  f"acierto {acc * 100:5.1f}% base {base * 100:5.1f}% d {(acc - base) * 100:+5.1f} | "
-                  f"train {tr_acc * 100:5.1f}% brecha {(tr_acc - acc) * 100:+5.1f} | "
-                  f"mejor {best_acc * 100:5.1f}% | ret {ret * 100:5.1f}% | "
-                  f"{_bar(acc / args.threshold if args.threshold else 1.0)} {dt:.1f}s | {status}")
+        every = args.log_every
+        if every <= 0 or epoch % every == 0 or improved or mastered:
+            status = "MASTERED" if mastered else f"meta {args.threshold * 100:.0f}%"
+            log_phase("[TRAIN]",
+                      f"  N{level} ep {epoch:3d} | loss {loss:.3f} (P {ploss:.3f} V {vloss:.3f}) | "
+                      f"acierto {acc * 100:5.1f}% base {base * 100:5.1f}% d {(acc - base) * 100:+5.1f} | "
+                      f"train {tr_acc * 100:5.1f}% brecha {(tr_acc - acc) * 100:+5.1f} | "
+                      f"mejor {best_acc * 100:5.1f}% | ret {ret * 100:5.1f}% | "
+                      f"{_bar(acc / args.threshold if args.threshold else 1.0)} {dt:.1f}s | {status}")
 
         if plateau and args.plateau_patience and plateau % args.plateau_patience == 0:
             log_phase("[TRAIN]", f"  aviso: nivel {level} sin mejorar el mejor acierto desde hace "
@@ -370,9 +390,16 @@ def train_level(net: SuperTatetiNet, trainer: PuzzleTrainer, args, level: int,
                        f"{epoch} epochs).")
             break
 
+        if args.plateau_stop and plateau >= args.plateau_stop:
+            log_phase("[TRAIN]", f"  nivel {level}: {plateau} epochs sin mejorar el mejor acierto "
+                       f"({best_acc * 100:.1f}% en el epoch {best_epoch}); se corta por "
+                       f"--plateau-stop {args.plateau_stop}.")
+            plateau_stopped = True
+            break
+
     return {"epochs": epoch, "best_acc": best_acc, "best_state": best_state,
             "best_epoch": best_epoch, "mastered": mastered, "stopped": stopped,
-            "capped": capped}
+            "capped": capped, "plateau_stopped": plateau_stopped}
 
 
 def revision_phase(net: SuperTatetiNet, trainer: PuzzleTrainer, args,
@@ -434,6 +461,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="tope de seguridad de epochs por nivel; 0 = sin tope, entrena hasta dominar")
     p.add_argument("--plateau-patience", type=int, default=10,
                    help="avisa si pasan estos epochs sin mejorar el mejor acierto (default 10)")
+    p.add_argument("--plateau-stop", type=int, default=0,
+                   help="corta el nivel y la corrida si pasan estos epochs sin mejorar el mejor "
+                        "acierto (0 = off, entrena sin tope)")
+    p.add_argument("--log-every", type=int, default=10,
+                   help="imprime la línea por epoch 1 de cada N epochs (<=0 = todas); "
+                        "los hitos (nuevo mejor, dominado, plateau, parada) se imprimen siempre")
     p.add_argument("--revision-epochs", type=int, default=6,
                    help="epochs de revisión de niveles viejos tras dominar cada nivel (default 6)")
     p.add_argument("--revision-puzzles", type=int, default=500,
@@ -449,6 +482,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="desactiva las simetrías D4 (por defecto cada muestra se rota/refleja al azar)")
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--dropout", type=float, default=0.0,
+                   help="dropout funcional en las capas compartidas (0 = off; se aplica solo entrenando)")
+    p.add_argument("--weight-decay", type=float, default=0.0,
+                   help="penalización L2 de Adam (weight decay; 0 = off)")
     p.add_argument("--value-coef", type=float, default=0.0,
                    help="peso de la pérdida de valor (0 = off: todos los puzzles son ganados, aprendería una constante)")
     p.add_argument("--replay-frac", type=float, default=0.30,
@@ -457,9 +494,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="solo se resuelven posiciones con turno >= este valor")
     p.add_argument("--solver-max-nodes", type=int, default=120000,
                    help="presupuesto de nodos del solver por posición (0 = sin límite)")
-    p.add_argument("--games-budget", type=int, default=8000,
-                   help="tope de partidas aleatorias por generación")
+    p.add_argument("--games-budget", type=int, default=0,
+                   help="tope duro de partidas aleatorias por generación; 0 = sin tope "
+                        "(junta el target usando --max-games como seguridad)")
+    p.add_argument("--max-games", type=int, default=200000,
+                   help="tope de seguridad de partidas cuando --games-budget=0")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--eval-seed", type=int, default=None,
+                   help="semilla del set de evaluación (default: = --seed); fijala para comparar "
+                        "entre reintentos con datos de train distintos")
     return p.parse_args(argv)
 
 
@@ -470,12 +513,19 @@ def _log_config(args, init: Path, out: Path) -> None:
               f"max-level={'sin tope' if not args.max_level else args.max_level}")
     log_phase("[INFO]", f"  umbral={args.threshold * 100:.0f}%  retención={ret_threshold * 100:.0f}%"
               f"  patience={args.patience}  min-epochs={args.min_epochs}  "
-              f"max-epochs={'sin tope' if not args.max_epochs else args.max_epochs}")
+              f"max-epochs={'sin tope' if not args.max_epochs else args.max_epochs}  "
+              f"plateau-stop={'off' if not args.plateau_stop else args.plateau_stop}  "
+              f"log-every={args.log_every}")
     log_phase("[INFO]", f"  entrada={canon.INPUT_ENCODING} (perspectiva de quien mueve)  "
               f"simetrías D4={'no' if getattr(args, 'no_augment', False) else 'sí'}  value-coef={args.value_coef}")
     log_phase("[INFO]", f"  puzzles/nivel={args.puzzles_per_level}  eval/nivel={args.eval_size}  "
-              f"batch={args.batch_size}  lr={args.lr}  replay={args.replay_frac}  "
+              f"batch={args.batch_size}  lr={args.lr}  dropout={args.dropout}  "
+              f"weight-decay={args.weight_decay}  replay={args.replay_frac}  "
               f"revisión={args.revision_epochs}ep/{args.revision_puzzles}puz")
+    log_phase("[INFO]", f"  generación: games-budget={'sin tope' if args.games_budget <= 0 else args.games_budget}"
+              f"  max-games={args.max_games}  min-turn={args.min_turn}  "
+              f"solver-max-nodes={'sin límite' if not args.solver_max_nodes else args.solver_max_nodes}  "
+              f"seed={args.seed}  eval-seed={_eval_seed(args)}")
 
 
 # ----------------------------------------------------------------------
@@ -496,7 +546,7 @@ def run(args) -> int:
 
     exclude: set = set()
     eval_sets, train_sets = build_sets(args)
-    net = load_net(init)
+    net = load_net(init, dropout=args.dropout)
 
     initial_state = clone_state(net)
     baseline_net = SuperTatetiNet()
@@ -507,7 +557,8 @@ def run(args) -> int:
               ", ".join(f"mate {n}: {baselines[n] * 100:.1f}%" for n in baselines))
 
     trainer = PuzzleTrainer(net, lr=args.lr, value_coef=args.value_coef, seed=args.seed,
-                            augment=not getattr(args, "no_augment", False))
+                            augment=not getattr(args, "no_augment", False),
+                            weight_decay=args.weight_decay)
     rng = random.Random(args.seed)
 
     replay: list[Puzzle] = []
@@ -597,9 +648,12 @@ def run(args) -> int:
         revision_phase(net, trainer, args, replay_by_level, learned, eval_sets, rng)
         write_incremental()
 
-        if res["stopped"] or res["capped"]:
+        if res["stopped"] or res["capped"] or res["plateau_stopped"]:
             if res["capped"]:
                 log_phase("[INFO]", "tope de epochs alcanzado sin dominar: se detiene el currículo.")
+            if res["plateau_stopped"]:
+                log_phase("[INFO]", "estancamiento (--plateau-stop): se detiene el currículo "
+                          "para reintentar con más datos.")
             break
         if not _STOP.is_set():
             log_phase("[TRAIN]", f"nivel {level} finalizado; se continúa con el nivel {level + 1}.")

@@ -1,4 +1,5 @@
-"""Creación de la siguiente generación: 7 supervivientes intactos + 13 descendientes mutados."""
+"""Creación de la siguiente generación: 7 redes supervivientes intactas + 13 descendientes mutados + los
+estáticos que siguen (no se reproducen)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,12 +23,16 @@ def plan_evolution(conn, cfg: Config, s: SeasonInfo) -> list[dict]:
     if season["stage"] != "evolution" or conn.execute(
             "SELECT 1 FROM evolution_plan WHERE season_id=%s LIMIT 1", (s.id,)).fetchone():
         return []
-    rows = conn.execute("SELECT individual_id, total_score, final_position FROM season_participants "
-                        "WHERE season_id=%s ORDER BY final_position", (s.id,)).fetchall()
-    ranked = [s.color_of[r["individual_id"]] for r in rows]
-    survivors = ranked[:rules.SURVIVORS]
+    rows = conn.execute(
+        """SELECT p.individual_id, p.final_position, i.ia_type FROM season_participants p
+           JOIN individuals i ON i.id = p.individual_id WHERE p.season_id=%s ORDER BY p.final_position""",
+        (s.id,)).fetchall()
+    gen = rules.select_next_generation([{"id": r["individual_id"], "type": r["ia_type"], "position": r["final_position"]}
+                                        for r in rows])
+    ranked = [s.color_of[i] for i in gen["trained_ranked"]]          # solo redes: los estáticos no se reproducen
+    survivors = [s.color_of[i] for i in gen["survivors"]]
 
-    # Padres según la tabla anual: puesto 1 -> 5 hijos, puesto 2 -> 3, ... (ver ParentPolicy)
+    # Padres según la tabla anual DE LAS REDES: puesto 1 -> 5 hijos, puesto 2 -> 3, ... (ver ParentPolicy)
     parents = mutation.parents_by_rank(ranked, cfg.parent_policy.children_per_rank)
 
     for pos, c in enumerate(survivors, start=1):
@@ -49,11 +54,17 @@ def plan_evolution(conn, cfg: Config, s: SeasonInfo) -> list[dict]:
                VALUES (%s,%s,'child',%s,%s,%s,%s)""",
             (s.id, rules.SURVIVORS + k, cid, s.id_of[parent_color], level, seed))
         children.append({"color": cc.color, "parent": parent_color, "level": level, "seed": seed})
-    return [{"type": "evolution_planned", "survivors": survivors, "children": children}]
+    # Estáticos que siguen (no se reproducen): ocupan cupos extra después de las 20 redes
+    stay = [s.color_of[i] for i in gen["statics_stay"]]
+    for k, color in enumerate(stay, start=1):
+        conn.execute("INSERT INTO evolution_plan (season_id, position, role, individual_id) VALUES (%s,%s,'static',%s)",
+                     (s.id, rules.POPULATION + k, s.id_of[color]))
+    return [{"type": "evolution_planned", "survivors": survivors, "children": children, "statics_stay": stay,
+             "statics_leave": [s.color_of[i] for i in gen["statics_leave"]], "zone": gen["zone"]}]
 
 
 def record_historical_best(db, cfg: Config, s: SeasonInfo) -> dict | None:
-    """Guarda un modelo histórico del mejor individuo de la temporada si supera al
+    """Guarda un modelo histórico de la mejor RED de la temporada (los estáticos no tienen pesos) si supera al
     mejor registrado hasta ahora (por puntos totales; ante igualdad se conserva el anterior).
     Es una COPIA nueva en ``models/historical``: no sobrescribe nada."""
     def read(conn):
@@ -61,7 +72,8 @@ def record_historical_best(db, cfg: Config, s: SeasonInfo) -> dict | None:
             return None
         champ = conn.execute(
             """SELECT p.individual_id, p.total_score, i.model_file, i.model_sha256 FROM season_participants p
-               JOIN individuals i ON i.id=p.individual_id WHERE p.season_id=%s AND p.final_position=1""", (s.id,)).fetchone()
+               JOIN individuals i ON i.id=p.individual_id
+               WHERE p.season_id=%s AND i.ia_type='neuronal' ORDER BY p.final_position LIMIT 1""", (s.id,)).fetchone()
         best = conn.execute("SELECT max(total_score) AS m FROM historical_best").fetchone()["m"]
         return champ if best is None or champ["total_score"] > best else None
 

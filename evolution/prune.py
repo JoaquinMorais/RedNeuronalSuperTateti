@@ -18,11 +18,14 @@ from pathlib import Path
 from . import modelstore
 from .config import Config
 
-# Una IA está protegida si fue 1.ª de la tabla anual o ganó Liga/Copa/Recopa en una temporada que cuenta
+# Una red está protegida si fue la 1.ª RED de la tabla anual o ganó Liga/Copa/Recopa en una temporada que cuenta
 # (todas si protect_every = 1; solo las múltiplo de K si K > 1: así los modelos conservados no crecen sin límite).
 PROTECTED_SQL = """(
     EXISTS (SELECT 1 FROM season_participants q JOIN seasons sq ON sq.id = q.season_id
-            WHERE q.individual_id = i.id AND q.final_position = 1
+            WHERE q.individual_id = i.id
+              AND q.final_position = (SELECT min(q2.final_position) FROM season_participants q2
+                                      JOIN individuals i2 ON i2.id = q2.individual_id
+                                      WHERE q2.season_id = q.season_id AND i2.ia_type = 'neuronal')
               AND (%(every)s <= 1 OR MOD(sq.number, %(every)s) = 0))
     OR EXISTS (SELECT 1 FROM seasons z WHERE i.id IN (z.league_champion_id, z.cup_champion_id, z.recopa_champion_id)
               AND (%(every)s <= 1 OR MOD(z.number, %(every)s) = 0))
@@ -41,7 +44,7 @@ JOIN individuals i ON i.id = l.individual_id
 WHERE s.status = 'completed'
   AND NOT EXISTS (SELECT 1 FROM evolution_plan e WHERE e.season_id = s.id AND e.individual_id = i.id)   -- expulsada
   AND l.last_season <= %(completed)s - %(retention)s                                                    -- pasó el plazo
-  AND i.model_sha256 IS NOT NULL AND i.model_pruned_at IS NULL
+  AND i.ia_type = 'neuronal' AND i.model_sha256 IS NOT NULL AND i.model_pruned_at IS NULL
   AND NOT """ + PROTECTED_SQL + """
 ORDER BY l.last_season, i.id
 """

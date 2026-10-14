@@ -19,10 +19,10 @@ TEST_URL = os.environ.get("TEST_DATABASE_URL")
 class Env:
     """Un esquema PostgreSQL aislado + un directorio de modelos propio."""
 
-    def __init__(self, tmp_path: Path, seed=42, initial="seed"):
+    def __init__(self, tmp_path: Path, seed=42, initial="seed", statics_dir=None):
         self.schema = "t_" + uuid.uuid4().hex[:10]
         self.models = tmp_path / "models"
-        self.seed, self.initial = seed, initial
+        self.seed, self.initial, self.statics_dir = seed, initial, statics_dir
         self.admin = psycopg.connect(TEST_URL, autocommit=True, row_factory=dict_row)
         self.admin.execute(f'CREATE SCHEMA "{self.schema}"')
         self.out = io.StringIO()
@@ -31,6 +31,8 @@ class Env:
         base = dict(database_url=TEST_URL, models_dir=self.models, seed=self.seed, max_seasons=1,
                     initial_population=self.initial, seed_model_path=ROOT / "model.pth", db_retry_base_delay=0.05,
                     bench_every=0)
+        if self.statics_dir is not None:
+            base["statics_dir"] = self.statics_dir
         base.update(kw)
         return Config(**base)
 

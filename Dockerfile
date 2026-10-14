@@ -14,6 +14,8 @@ RUN pip install -r requirements.txt
 
 COPY game.py model.py pytest.ini ./
 COPY evolution ./evolution
+COPY models_statics ./models_statics
+COPY trainPuzzles ./trainPuzzles
 COPY tests ./tests
 COPY scripts ./scripts
 

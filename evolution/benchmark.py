@@ -13,7 +13,8 @@ from game import SuperTateti
 
 from . import stats
 from .bots import BOTS
-from .engine import select_move
+from .engine import choose_cell
+from models_statics.base import StaticBot
 from .rng import derive_seed
 
 OPPONENTS = ("random", "tactical")
@@ -25,18 +26,21 @@ TACTICAL_VS_RANDOM = 0.96
 
 
 def evaluate_net(net, opponent: str, games: int, seed: int) -> dict:
-    """``games`` partidas de la red contra un bot, alternando lado (pares: la red comienza como X)."""
+    """``games`` partidas de un jugador (red o bot estático) contra un bot de referencia, alternando lado
+    (pares: comienza como X). El azar de los bots sale de ``seed`` (y se resiembra por partida)."""
     rng = random.Random(seed)
     bot = BOTS[opponent](rng)
     tot = [0, 0, 0]
     side_x, side_o = [0, 0, 0], [0, 0, 0]
     for g in range(games):
         side = 1 if g % 2 == 0 else -1
+        if isinstance(net, StaticBot):
+            net.reseed(derive_seed(seed, "game", g))
         game = SuperTateti()
         while game.winner is None:
             if game.current_player == side:
-                mv = select_move(net, game)
-                game.make_move(mv // 9, mv % 9)
+                b, c = choose_cell(net, game)
+                game.make_move(b, c)
             else:
                 b, c = bot.choose(game)
                 game.make_move(b, c)
@@ -74,7 +78,7 @@ def run_season_benchmark(db, cfg, info, nets: dict, top1_id: int, check_stop: Ca
             rows.append(("top1", opp, top1_id, top, derive_seed(info.seed, "bench", "top1", opp)))
             pop = None
             if cfg.bench_pop_games > 0:
-                for iid in sorted(info.color_of):
+                for iid in sorted(i for i in info.color_of if i in nets):   # solo redes (los estáticos no son redes)
                     check_stop()
                     r = evaluate_net(nets[iid], opp, cfg.bench_pop_games, derive_seed(info.seed, "bench", "pop", opp, iid))
                     pop = r if pop is None else _add(pop, r)
@@ -114,6 +118,8 @@ def bench_ia(ia: dict, games: int, seed: int, load_net) -> dict:
 
 
 def render_bench(out, ia: dict, res: dict, games: int, seed: int) -> None:
+    if ia.get("type") == "estatico":
+        out.statics[ia["color"]] = {"name": ia["name"], "color2": ia["color2"], "slug": ia["slug"]}
     out.banner(f"BENCHMARK · {out.ia(ia['color'])} ({ia['label']})")
     out.emit(f"  {games} partidas por rival (mitad como X, mitad como O) · semilla {seed}")
     for opp in OPPONENTS:
@@ -135,10 +141,11 @@ def backfill(db, cfg, step: int, games: int, emit=print) -> int:
     Solo el 1.º (los .pth del resto de la población pueden haberse borrado). Usa las mismas semillas que la
     medición automática. Se puede ejecutar mientras se entrena. Devuelve cuántas temporadas midió."""
     from . import modelstore
+    from .repo import BEST_NEURAL_SQL
 
     todo = db.run(lambda c: c.execute(
         """SELECT s.id, s.number, s.seed, p.individual_id, i.model_file, i.model_sha256 FROM seasons s
-           JOIN season_participants p ON p.season_id = s.id AND p.final_position = 1
+           JOIN season_participants p ON p.season_id = s.id AND """ + BEST_NEURAL_SQL + """
            JOIN individuals i ON i.id = p.individual_id
            WHERE s.status = 'completed'
              AND NOT EXISTS (SELECT 1 FROM season_benchmarks b WHERE b.season_id = s.id)

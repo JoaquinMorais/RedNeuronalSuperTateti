@@ -68,6 +68,29 @@ def season_format(n_teams: int) -> dict:
     }
 
 
+def select_next_generation(participants: list[dict]) -> dict:
+    """Quién sigue en la próxima temporada. ``participants``: dicts con ``id``, ``type`` ('neuronal' | 'estatico')
+    y ``position`` (puesto en la tabla anual, 1 = mejor).
+
+    * Redes neuronales: se conservan intactas las 7 mejores *redes* (los estáticos no ocupan esos cupos) y se
+      reproducen según su puesto entre las redes (los estáticos no se reproducen).
+    * Estáticos: siguen si terminan dentro de los primeros ``7 + S`` puestos de la tabla anual, con ``S`` = cantidad
+      de estáticos que jugaron (7 cupos de redes + 1 por cada estático); si no, salen.
+    Devuelve ids ordenados por puesto: ``trained_ranked`` (todas las redes), ``survivors``, ``statics_stay``,
+    ``statics_leave`` y ``zone`` (= 7 + S)."""
+    ordered = sorted(participants, key=lambda p: p["position"])
+    trained = [p for p in ordered if p["type"] == "neuronal"]
+    statics = [p for p in ordered if p["type"] == "estatico"]
+    zone = SURVIVORS + len(statics)
+    return {
+        "trained_ranked": [p["id"] for p in trained],
+        "survivors": [p["id"] for p in trained[:SURVIVORS]],
+        "statics_stay": [p["id"] for p in statics if p["position"] <= zone],
+        "statics_leave": [p["id"] for p in statics if p["position"] > zone],
+        "zone": zone,
+    }
+
+
 def league_reward(position: int) -> int:
     """Recompensa evolutiva por posición final en Liga. Más allá del 20.º (temporadas con IA añadidas): -3."""
     return LEAGUE_REWARD[position - 1] if position <= len(LEAGUE_REWARD) else LEAGUE_REWARD[-1]

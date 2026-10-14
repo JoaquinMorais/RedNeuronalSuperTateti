@@ -1,0 +1,32 @@
+{
+  "input_encoding": "canonical",
+  "init": "trainPuzzles/checkpoints/puzzle_canon.pth",
+  "out": "trainPuzzles/checkpoints/ab_control.pth",
+  "report": "trainPuzzles/checkpoints/ab_control_report.json",
+  "levels_requested": 1,
+  "max_level": 2,
+  "threshold": 0.9,
+  "retention_threshold": 0.9,
+  "patience": 2,
+  "min_epochs": 15,
+  "big": 0.2,
+  "small": 0.05,
+  "levels": [
+    {
+      "level": 1,
+      "baseline": 0.931,
+      "final": 0.925,
+      "delta": -0.006000000000000005,
+      "epochs": 16,
+      "mastered": true,
+      "reached": true,
+      "best": 0.925,
+      "best_epoch": 15,
+      "verdict": "no muestra un aprendizaje claro"
+    }
+  ],
+  "avg_delta": -0.006000000000000005,
+  "verdict": "no muestra un aprendizaje claro",
+  "levels_reached": 1,
+  "levels_mastered": 1
+}

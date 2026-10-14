@@ -76,6 +76,19 @@ def test_harvest_respeta_should_stop():
     assert got[2] == []
 
 
+def test_harvest_sin_tope_alcanza_el_target():
+    # games_budget=0 => sin tope: sigue hasta juntar el target pedido
+    got = P.harvest({1: 5}, seed=3, max_n=1, games_budget=0, max_games=20000)
+    assert len(got[1]) == 5
+
+
+def test_harvest_respeta_max_games_de_seguridad():
+    # target inalcanzable (solver corto): debe frenar por max_games y devolver lo juntado
+    got = P.harvest({4: 100000}, seed=3, max_n=4, games_budget=0, max_games=50,
+                    min_turn=16, solver_max_nodes=1)
+    assert 0 <= len(got[4]) < 100000
+
+
 def _game_from_puzzle(p):
     g = SuperTateti()
     board, small, player, active = p.key

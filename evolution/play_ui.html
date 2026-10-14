@@ -83,9 +83,10 @@ async function move(b, c) {
 function render(s) {
   S = s;
   const o = s.opponent;
-  $('swatch').style.background = o.color;
+  $('swatch').style.background = o.static ? `linear-gradient(90deg, ${o.color} 50%, ${o.color2} 50%)` : o.color;
   $('oppname').textContent = o.tag;
-  $('oppinfo').textContent = `mejor de la tabla anual de la temporada ${o.season} · ${o.total} pts (Liga ${o.league} + Copa ${o.cup} + Recopa ${o.recopa})`;
+  $('oppinfo').textContent = o.static ? 'bot estático (lógica propia, sin red neuronal)'
+    : `mejor de la tabla anual de la temporada ${o.season} · ${o.total} pts (Liga ${o.league} + Copa ${o.cup} + Recopa ${o.recopa})`;
   $('score').textContent = `Vos ${s.score.human} · IA ${s.score.ai} · Empates ${s.score.draw}`;
   const board = $('board'); board.innerHTML = '';
   if (!s.started) return;

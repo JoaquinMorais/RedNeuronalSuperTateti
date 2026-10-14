@@ -6,11 +6,12 @@ import time
 from pathlib import Path
 
 from . import competitions as comp
-from . import additions, benchmark, evolve, modelstore, prune, repo, reports, rules
+from . import additions, benchmark, evolve, modelstore, prune, repo, reports, rules, statics
 from .config import Config
 from .db import Database
 from .display import ROUND_NAME, Display
 from .engine import net_is_finite, play_match
+from models_statics.base import StaticBot
 from .rng import derive_seed
 
 log = logging.getLogger("evolution.runner")
@@ -40,7 +41,8 @@ class Trainer:
         self.stop = stop or StopFlag()
         self.on_match_played = on_match_played      # ganchos para pruebas de interrupción
         self.on_matchday_closed = on_matchday_closed
-        self.nets: dict[int, object] = {}
+        self.nets: dict[int, object] = {}       # solo redes neuronales (id -> red)
+        self.players: dict[int, object] = {}    # todos los participantes (redes y bots estáticos)
         self.session_t0 = time.perf_counter()
 
     # ------------------------------------------------------------------
@@ -104,13 +106,27 @@ class Trainer:
         return self.db.run(tx)
 
     def _load_nets(self, info: comp.SeasonInfo) -> None:
+        """Carga las redes (.pth) y construye los bots estáticos (código de ``models_statics/``)."""
         rows = self.db.run(lambda c: c.execute(
-            "SELECT id, model_file, model_sha256 FROM individuals WHERE id = ANY(%s)", (list(info.color_of),)).fetchall())
+            """SELECT id, model_file, model_sha256, ia_type, static_name, static_slug, static_code_sha256
+               FROM individuals WHERE id = ANY(%s)""", (list(info.color_of),)).fetchall())
+        self.nets, self.players = {}, {}
         for r in rows:
+            if r["ia_type"] == statics.STATIC_TYPE:
+                cls = statics.load_one(self.cfg.statics_dir, r["static_slug"])   # solo ESE archivo: otros bots rotos no molestan
+                if cls is None:
+                    raise statics.StaticError(
+                        f"El bot estático '{r['static_name']}' compite en esta temporada pero no se encuentra "
+                        f"{r['static_slug']}.py en {self.cfg.statics_dir}.")
+                if statics.code_hash(self.cfg.statics_dir, r["static_slug"]) != r["static_code_sha256"]:
+                    self.out.emit(f"AVISO: el código de {r['static_name']} cambió desde que se registró: compite con la versión actual.")
+                self.players[r["id"]] = statics.make_player(cls)
+                continue
             if r["model_sha256"] is None:
                 raise RuntimeError(f"El modelo {r['model_file']} no está materializado")
-            self.nets[r["id"]] = modelstore.load_net(self.cfg.models_dir / r["model_file"], r["model_sha256"])
-        broken = [info.color_of[i] for i, n in self.nets.items() if i in info.color_of and not net_is_finite(n)]
+            net = modelstore.load_net(self.cfg.models_dir / r["model_file"], r["model_sha256"])
+            self.nets[r["id"]] = self.players[r["id"]] = net
+        broken = [info.color_of[i] for i, n in self.nets.items() if not net_is_finite(n)]
         if broken:
             self.out.emit(f"AVISO: {len(broken)} IA tienen pesos tan grandes que su red desborda float32 ({', '.join(broken[:5])}"
                           f"{'...' if len(broken) > 5 else ''}). Juegan con el movimiento de respaldo (pierden y salen); "
@@ -121,12 +137,14 @@ class Trainer:
         recovered = self.db.run(lambda c: comp.reset_running(c, season_row["id"]))
         repo.materialize_models(self.db, self.cfg)
         info = self.db.run(lambda c: comp.load_season_info(c, season_row))
+        self.out.statics = self.db.run(reports.load_statics)   # nombres de los estáticos (también los de temporadas anteriores)
         self._load_nets(info)
         season = self.db.run(lambda c: c.execute("SELECT * FROM seasons WHERE id=%s", (info.id,)).fetchone())
         self.out.titles = self.db.run(lambda c: reports.titles_through(c, info.number - 1))  # campeones de temporadas anteriores
         prog = self.db.run(lambda c: comp.progress(c, info.id))
+        in_season = tuple(c for i, c in info.color_of.items() if c in self.out.statics)
         self.out.header(season=season, master_seed=master, cfg=self.cfg, resumed=resumed, progress=prog,
-                        db_status=self._db_status())
+                        db_status=self._db_status(), statics=in_season)
         if recovered:
             self.out.emit(f"  Recuperadas {recovered} partida(s) que estaban en ejecución: se repiten desde el principio "
                           f"(determinista: mismo resultado; nunca se cuentan dos veces).")
@@ -177,7 +195,8 @@ class Trainer:
         repo.materialize_models(self.db, self.cfg)  # escribe los archivos de los 13 descendientes
         hist = evolve.record_historical_best(self.db, self.cfg, info)
         top1 = self.db.run(lambda c: c.execute(
-            "SELECT individual_id FROM season_participants WHERE season_id=%s AND final_position=1", (info.id,)).fetchone()["individual_id"])
+            """SELECT p.individual_id FROM season_participants p JOIN individuals i ON i.id = p.individual_id
+               WHERE p.season_id=%s AND i.ia_type='neuronal' ORDER BY p.final_position LIMIT 1""", (info.id,)).fetchone()["individual_id"])
         bench = benchmark.run_season_benchmark(self.db, self.cfg, info, self.nets, top1, self._check_stop)  # medida absoluta
         self.db.run(lambda c: evolve.complete_season(c, info))
         self.out.titles = self.db.run(lambda c: reports.titles_through(c, info.number))  # ya incluye a los campeones de esta temporada
@@ -216,7 +235,11 @@ class Trainer:
                 self._check_stop()
                 if not self.db.run(lambda c, m=m: comp.claim_match(c, m["id"])):
                     continue
-                outcome = play_match(self.nets[m["x_individual_id"]], self.nets[m["o_individual_id"]])
+                px, po = self.players[m["x_individual_id"]], self.players[m["o_individual_id"]]
+                for side, player in (("x", px), ("o", po)):          # el azar de un estático se siembra POR PARTIDA:
+                    if isinstance(player, StaticBot):                # una partida interrumpida se repite idéntica
+                        player.reseed(derive_seed(info.seed, "static", m["id"], side))
+                outcome = play_match(px, po)
                 if self.on_match_played:
                     self.on_match_played(m, outcome)
                 if self.db.run(lambda c, m=m, o=outcome: comp.record_result(c, m, o)):
@@ -264,6 +287,10 @@ class Trainer:
             "cup_champion": info.color_of[s["cup_champion_id"]], "cup_runner_up": info.color_of[s["cup_runner_up_id"]],
             "recopa_champion": info.color_of[s["recopa_champion_id"]],
             "survivors": [p["color"] for p in plan if p["role"] == "survivor"],
+            "statics_stay": [p["color"] for p in plan if p["role"] == "static"],
+            "statics_leave": [(r["color"], r["final_position"]) for r in sorted(parts, key=lambda r: r["final_position"])
+                              if r["color"] in self.out.statics and r["color"] not in {p["color"] for p in plan}],
+            "zone": rules.SURVIVORS + sum(1 for r in parts if r["color"] in self.out.statics),
             "children": [{"color": p["color"], "parent": p["parent_color"], "level": p["mutation_level"]}
                          for p in plan if p["role"] == "child"],
             "historical": hist, "sim_ms": prog["sim_ms"],

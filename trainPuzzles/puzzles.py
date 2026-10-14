@@ -238,7 +238,8 @@ def harvest(
     exclude: set | None = None,
     min_turn: int = 16,
     solver_max_nodes: int = 0,
-    games_budget: int = 8000,
+    games_budget: int = 0,
+    max_games: int = 200000,
     log=None,
     log_interval: float = 10.0,
     should_stop=None,
@@ -249,6 +250,11 @@ def harvest(
     evitar (p. ej. el set de evaluación). ``should_stop``: callable opcional que, si
     devuelve True, corta la generación (para paradas prolijas). Devuelve
     {nivel: [Puzzle, ...]}.
+
+    ``games_budget``: tope duro de partidas aleatorias por generación. **0 o negativo =
+    sin tope**: se juega hasta juntar el target (con ``max_games`` como tope de
+    seguridad para no colgarse si el target es inalcanzable). Un valor ``>0`` mantiene
+    el comportamiento viejo (corta a esa cantidad de partidas y devuelve lo juntado).
     """
     level_targets = {int(k): int(v) for k, v in level_targets.items() if v > 0}
     if not level_targets:
@@ -264,7 +270,8 @@ def harvest(
 
     games = 0
     last_log = time.time()
-    while games < games_budget and pending():
+    limit = games_budget if games_budget > 0 else max_games
+    while games < limit and pending():
         if should_stop is not None and should_stop():
             break
         games += 1

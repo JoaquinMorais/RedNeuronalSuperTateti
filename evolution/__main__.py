@@ -9,7 +9,7 @@ import sys
 import psycopg
 from psycopg.rows import dict_row
 
-from . import additions, benchmark, disk, ladder, modelstore, play, progress, prune, reports, sandbox
+from . import additions, benchmark, disk, ladder, modelstore, play, progress, prune, reports, sandbox, statics
 from .config import load_config
 from .db import AlreadyRunningError, Database
 from .display import Display
@@ -20,10 +20,12 @@ USAGE = """Uso: python -m evolution <comando>
   status              lista las temporadas, con sus campeones
   season N            analiza la temporada N (Liga, Copa, Recopa, tabla anual)
   champions [N]       campeones por temporada + ranking (los N mejores; por defecto 30)
-  play [N]            juega contra el mejor de la tabla anual de la temporada N (por defecto, la última terminada)
-  fight A B           pelea de ida y vuelta entre dos IA (A y B: nº de temporada = 1.º de su tabla anual, o color #rrggbb)
+  play [N|nombre]     juega contra la mejor RED de la temporada N (por defecto, la última terminada) o contra un estático por su nombre
+  fight A B [C..]     pelea de ida y vuelta (2 IA) o mini liga (3 a 8). IA: nº de temporada = mejor RED de esa tabla anual, color #rrggbb,
+                      o NOMBRE de un bot estático (los estáticos solo se invocan por su nombre)
   testleague A [B..]  Liga de prueba (no se guarda): tus IA + aleatorias hasta 20; opcional seed=N
-  addai f.pth [..]    añade IA a la PRÓXIMA temporada (+2 partidas por IA y grupos más grandes); --list · --cancel #color
+  addai x [y..]       añade a la PRÓXIMA temporada: archivos .pth (redes) y/o NOMBRES de bots estáticos; --list · --cancel color|nombre
+  statics             bots estáticos disponibles en models_statics/ y su estado
   progress [N]        curva de aprendizaje contra bots fijos (últimas N mediciones), ritmo y eficacia de mutaciones
                       progress --backfill [cada] [partidas]: mide temporadas ya jugadas para ver la curva sin esperar
   bench A [partidas]  mide una IA contra los bots fijos (aleatorio y táctico); por defecto 200 partidas por rival
@@ -38,14 +40,15 @@ MENU = """
   1) Estado de las temporadas
   2) Ver una temporada en detalle        (ej.: "2 21")
   3) Campeones                           (ej.: "3 100" muestra 100; por defecto 30)
-  4) Jugar contra la IA                  (ej.: "4 12" = mejor de la temporada 12; por defecto, la última terminada)
-  5) Pelear entre IA                     (ej.: "5 1 311" o "5 #ffffff 12": partida de ida y vuelta)
-  6) Liga de prueba con IA random        (ej.: "6 1 311 #ffffff": esas IA + random hasta 20; opcional seed=N)
-  7) Añadir IA a la próxima temporada    (ej.: "7 models/mi_ia.pth"; "7 --list"; "7 --cancel #abc123")
+  4) Jugar contra la IA                  (ej.: "4 12" = mejor RED de la temporada 12; "4 BocaJrs" = un estático)
+  5) Pelear entre IA                     (ej.: "5 1 311" · "5 311 BocaJrs" · "5 1 311 BocaJrs" = mini liga de 3)
+  6) Liga de prueba con IA random        (ej.: "6 1 311 BocaJrs": esas IA + random hasta 20; opcional seed=N)
+  7) Añadir IA a la próxima temporada    (ej.: "7 models/mi_ia.pth" · "7 BocaJrs" (estático) · "7 --list" · "7 --cancel BocaJrs")
   8) Progreso: curva de aprendizaje      (ej.: "8 50" = últimas 50 mediciones; "8 --backfill 10" mide temporadas ya jugadas)
   9) Medir una IA contra bots fijos      (ej.: "9 12" o "9 #ffffff 500" = 500 partidas por rival)
  10) Torneo maestro entre campeones      (ej.: "10 5" = un campeón cada 5 temporadas; "10 5 40" = hasta 40)
   11) Espacio en disco (modelos, huérfanos, base de datos)
+  12) Bots estáticos (disponibles en models_statics/ y su estado)
   0) Salir"""
 
 
@@ -66,6 +69,7 @@ def _read_only(cfg, fn) -> int:
     out = Display(cfg.color)
     try:
         with psycopg.connect(cfg.database_url, row_factory=dict_row) as conn:
+            out.statics = reports.load_statics(conn)
             fn(conn, out)
     except psycopg.errors.UndefinedTable:
         print("La base de datos todavía no tiene temporadas (ejecutá primero `run`).", file=sys.stderr)
@@ -76,19 +80,30 @@ def _read_only(cfg, fn) -> int:
     return 0
 
 
-def cmd_play(cfg, season: int | None) -> int:
+def cmd_play(cfg, season: int | None, name: str | None = None) -> int:
+    """Juega contra la mejor RED de una temporada (por defecto la última terminada) o, con ``name``, contra un estático."""
     found: dict = {}
 
     def find(conn, out):
         try:
-            found["opp"] = play.find_opponent(conn, cfg.models_dir, season)
+            if name:
+                ia = sandbox.resolve_ia(conn, cfg.models_dir, name, cfg.statics_dir)
+                if ia.get("type") != "estatico":
+                    raise play.PlayError(f"'{name}' no es un bot estático (un número de temporada elige la mejor red).")
+                found["opp"] = {"season": None, "color": ia["color"], "tag": ia["tag"], "static": True, "name": ia["name"],
+                                "color2": ia["color2"], "total": None, "league": None, "cup": None, "recopa": None}
+                found["player"] = lambda: sandbox.make_player(ia, 0)
+            else:
+                opp = play.find_opponent(conn, cfg.models_dir, season)
+                found["opp"] = opp
+                found["player"] = lambda: play.load_opponent_net(opp)
         except play.PlayError as e:
             print(f"No se puede jugar: {e}", file=sys.stderr)
 
     rc = _read_only(cfg, find)
     if "opp" not in found:
         return rc or 1
-    session = play.PlaySession(play.load_opponent_net(found["opp"]), found["opp"])
+    session = play.PlaySession(found["player"](), found["opp"])
     play.serve(session, cfg.play_host, cfg.play_port)
     return 0
 
@@ -98,7 +113,7 @@ def _resolve(cfg, tokens: list[str]) -> list[dict] | None:
 
     def fn(conn, out):
         try:
-            found["ias"] = sandbox.resolve_many(conn, cfg.models_dir, tokens)
+            found["ias"] = sandbox.resolve_many(conn, cfg.models_dir, tokens, cfg.statics_dir)
         except play.PlayError as e:
             print(f"No se puede: {e}", file=sys.stderr)
 
@@ -107,19 +122,36 @@ def _resolve(cfg, tokens: list[str]) -> list[dict] | None:
 
 
 def cmd_fight(cfg, tokens: list[str]) -> int:
-    if len(tokens) != 2:
-        print("Uso: fight A B  (cada IA: nº de temporada o color #rrggbb; ej.: fight 1 311  /  fight 12 a1b2c3)", file=sys.stderr)
+    import secrets
+    seed, refs = None, []
+    for t in tokens:
+        if t.lower().startswith("seed=") and t[5:].isdigit():
+            seed = int(t[5:])
+        else:
+            refs.append(t)
+    if not 2 <= len(refs) <= 8:
+        print("Uso: fight A B [C ...] [seed=N]  (2 IA = pelea de ida y vuelta; 3 a 8 = mini liga. Cada IA: nº de temporada = mejor "
+              "RED de esa tabla anual, color #rrggbb o NOMBRE de un bot estático; ej.: fight 1 311 BocaJrs)", file=sys.stderr)
         return 2
-    ias = _resolve(cfg, tokens)
+    ias = _resolve(cfg, refs)
     if ias is None:
         return 1
+    seed = secrets.randbits(31) if seed is None else seed
     out = Display(cfg.color)
     try:
-        res = sandbox.fight(ias[0], ias[1])
+        if len(ias) == 2:
+            res = sandbox.fight(ias[0], ias[1], seed)
+        else:
+            res = sandbox.fight_round_robin(ias, seed)
     except Exception as e:  # noqa: BLE001  (modelo corrupto, hash que no coincide, ...)
         print(f"No se pudo pelear: {e}", file=sys.stderr)
         return 1
-    sandbox.render_fight(out, ias[0], ias[1], res)
+    if len(ias) == 2:
+        sandbox.render_fight(out, ias[0], ias[1], res)
+        if any(i.get("type") == "estatico" for i in ias):
+            out.emit(out.dim(f"  Hay un bot estático: su azar sale de la semilla {seed} (repetí con seed={seed})."))
+    else:
+        sandbox.render_fight_table(out, ias, res, seed)
     return 0
 
 
@@ -142,6 +174,7 @@ def cmd_testleague(cfg, tokens: list[str]) -> int:
         return 1
     seed = secrets.randbits(31) if seed is None else seed
     out = Display(cfg.color)
+    sandbox.show(out, ias)
     tested = {i["color"] for i in ias}
 
     def progress(md, games):
@@ -169,29 +202,44 @@ def cmd_addai(cfg, args: list[str]) -> int:
         db.connect_with_retries()
         if not db.run(lambda c: c.execute("SELECT to_regclass('season_additions') AS t").fetchone()["t"]):
             db.init_schema()     # base creada con una versión anterior: migrar
+        out.statics = db.run(reports.load_statics)
         if args[:1] == ["--list"]:
             rows = db.run(lambda c: additions.list_pending(c))
             if not rows:
                 print("No hay IA añadidas pendientes.")
             for r in rows:
-                print(f"  {out.ia(r['color'], badge=False)} -> temporada {r['season_number']}  (desde {r['source']})")
+                if r["ia_type"] == "estatico":
+                    out.statics[r["color"]] = {"name": r["static_name"], "color2": r["static_color2"], "slug": ""}
+                print(f"  {out.ia(r['color'], badge=False)} ({'estático' if r['ia_type'] == 'estatico' else 'red'}) -> "
+                      f"temporada {r['season_number']}  (desde {r['source']})")
             return 0
         if args[:1] == ["--cancel"]:
             if len(args) != 2:
-                print("Uso: addai --cancel #color", file=sys.stderr)
+                print("Uso: addai --cancel color|nombre", file=sys.stderr)
                 return 2
             r = additions.cancel_addition(db, cfg, args[1])
-            print(f"Quitada {r['color']} de la temporada {r['season']}.")
+            print(f"Quitada {r['name'] or r['color']} de la temporada {r['season']}.")
             return 0
         res = additions.register_additions(db, cfg, args)
         f = res["format"]
+        n_static = 0
         for a in res["added"]:
-            print(f"  Añadida {out.ia(a['color'], badge=False)}  (desde {a['source']})")
+            if a["type"] == "estatico":
+                n_static += 1
+                out.statics[a["color"]] = {"name": a["name"], "color2": a["color2"], "slug": ""}
+                print(f"  Añadido el estático {out.ia(a['color'], badge=False)}  (desde {a['source']})")
+            else:
+                print(f"  Añadida {out.ia(a['color'], badge=False)}  (desde {a['source']})")
         gs = "/".join(map(str, f["group_sizes"]))
         print(f"La temporada {res['target']} tendrá {f['teams']} equipos ({res['total_extra']} añadida(s)): "
               f"Liga de {f['league_matchdays']} fechas ({f['games_per_team']} partidas por IA"
               f"{', una IA descansa en cada fecha' if f['teams'] % 2 else ''}), grupos de Copa de {gs} "
-              f"(quedan fuera {'/'.join(map(str, f['group_eliminated']))}). La temporada {res['target'] + 1} vuelve a tener 20.")
+              f"(quedan fuera {'/'.join(map(str, f['group_eliminated']))}).")
+        if n_static:
+            print("Los estáticos no se reproducen: siguen en la temporada siguiente mientras terminen dentro de los primeros "
+                  "7 + (nº de estáticos) puestos de la tabla anual; si no, salen y la composición vuelve a 20.")
+        else:
+            print(f"La temporada {res['target'] + 1} vuelve a tener 20.")
         return 0
     except additions.AdditionError as e:
         print(f"No se pudo añadir: {e}", file=sys.stderr)
@@ -239,7 +287,7 @@ def cmd_bench(cfg, tokens: list[str]) -> int:
     if len(rest) == 2 and rest[1].isdigit():
         games = int(rest[1])
     elif len(rest) != 1:
-        print("Uso: bench A [partidas] [seed=N]  (A: nº de temporada o color #rrggbb)", file=sys.stderr)
+        print("Uso: bench A [partidas] [seed=N]  (A: nº de temporada = mejor RED, color #rrggbb o NOMBRE de un estático)", file=sys.stderr)
         return 2
     if not 2 <= games <= 5000:
         print("Las partidas por rival deben estar entre 2 y 5000.", file=sys.stderr)
@@ -249,9 +297,10 @@ def cmd_bench(cfg, tokens: list[str]) -> int:
         return 1
     seed = secrets.randbits(31) if seed is None else seed
     out = Display(cfg.color)
+    sandbox.show(out, ias)
     out.emit(f"Midiendo {out.ia(ias[0]['color'])} contra los bots fijos ({games} partidas por rival)...")
     try:
-        res = benchmark.bench_ia(ias[0], games, seed, lambda ia: modelstore.load_net(ia["path"], ia["sha256"]))
+        res = benchmark.bench_ia(ias[0], games, seed, lambda ia: sandbox.make_player(ia, seed))
     except Exception as e:  # noqa: BLE001
         print(f"No se pudo medir: {e}", file=sys.stderr)
         return 1
@@ -260,25 +309,38 @@ def cmd_bench(cfg, tokens: list[str]) -> int:
 
 
 def cmd_ladder(cfg, args: list[str]) -> int:
-    nums = [int(a) for a in args if a.isdigit() and int(a) > 0]
-    if len(nums) != len(args) or len(nums) > 2:
-        print("Uso: ladder [paso] [max]  (ej.: ladder 5 40)", file=sys.stderr)
+    nums = [a for a in args if a.isdigit() and int(a) > 0]
+    names = [a for a in args if a not in nums]
+    if len(nums) > 2 or any(a.isdigit() for a in names):
+        print("Uso: ladder [paso] [max] [nombre_estatico ...]  (ej.: ladder 5 40 BocaJrs)", file=sys.stderr)
         return 2
-    step = nums[0] if nums else None
-    max_n = nums[1] if len(nums) > 1 else 20
+    step = int(nums[0]) if nums else None
+    max_n = int(nums[1]) if len(nums) > 1 else 20
     if max_n > 60:
         print("Máximo 60 campeones (son n·(n-1) partidas).", file=sys.stderr)
         return 2
     found: dict = {}
-    rc = _read_only(cfg, lambda conn, out: found.update(champs=ladder.pick_champions(conn, cfg.models_dir, step, max_n)))
+
+    def fn(conn, out):
+        try:
+            champs = ladder.pick_champions(conn, cfg.models_dir, step, max_n)
+            extra = sandbox.resolve_many(conn, cfg.models_dir, names, cfg.statics_dir) if names else []
+            if any(e.get("type") != "estatico" for e in extra):
+                raise play.PlayError("Los nombres extra del torneo deben ser bots estáticos (los campeones de cada temporada se eligen solos).")
+            found["champs"] = champs + [{"season": None, "color": e["color"], "cls": e["cls"], "slug": e["slug"],
+                                         "path": None, "sha256": None} for e in extra]
+        except play.PlayError as e:
+            print(f"No se puede: {e}", file=sys.stderr)
+
+    rc = _read_only(cfg, fn)
     if "champs" not in found:
         return rc or 1
     out = Display(cfg.color)
     champs = found["champs"]
     if len(champs) < 3:
-        out.emit("Hacen falta al menos 3 campeones distintos con su .pth guardado (más temporadas completadas).")
+        out.emit("Hacen falta al menos 3 campeones distintos con su .pth guardado (más temporadas completadas) o estáticos.")
         return 1
-    out.emit(f"Torneo maestro con {len(champs)} campeones ({len(champs) * (len(champs) - 1)} partidas)...")
+    out.emit(f"Torneo maestro con {len(champs)} participantes ({len(champs) * (len(champs) - 1)} partidas)...")
     try:
         res = ladder.run_ladder(champs)
     except Exception as e:  # noqa: BLE001
@@ -286,6 +348,10 @@ def cmd_ladder(cfg, args: list[str]) -> int:
         return 1
     ladder.render_ladder(out, res)
     return 0
+
+
+def cmd_statics(cfg) -> int:
+    return _read_only(cfg, lambda conn, out: reports.render_statics(conn, out, cfg))
 
 
 def cmd_disk(cfg) -> int:
@@ -352,7 +418,7 @@ def cmd_menu(cfg) -> int:
             try:
                 choice, args = parse_menu_line(input("Opción: "))
                 n = _positive_int(args)
-                if choice in ("2", "3", "4") and args and n is None:
+                if choice in ("2", "3") and args and n is None:
                     print("El argumento debe ser un número entero positivo (ej.: 3 100).")
                     continue
                 if choice == "1":
@@ -370,7 +436,7 @@ def cmd_menu(cfg) -> int:
                 elif choice == "3":
                     reports.render_champions(conn, out, n or cfg.champions_top)
                 elif choice == "4":
-                    cmd_play(cfg, n)
+                    cmd_play(cfg, n, None if n or not args else args[0])
                 elif choice == "5":
                     cmd_fight(cfg, args or input("IA 1 y IA 2 (temporada o #color): ").split())
                 elif choice == "6":
@@ -378,17 +444,19 @@ def cmd_menu(cfg) -> int:
                 elif choice == "7":
                     if not args:
                         cmd_addai(cfg, ["--list"])
-                        args = shlex.split(input("Archivo .pth a añadir (ruta o nombre dentro de models/): "))
+                        args = shlex.split(input("Archivo .pth (ruta o nombre dentro de models/) o NOMBRE de un bot estático: "))
                     if args:
                         cmd_addai(cfg, args)
                 elif choice == "8":
                     cmd_progress(cfg, args)
                 elif choice == "9":
-                    cmd_bench(cfg, args or input("IA a medir (temporada o #color) y partidas opcionales: ").split())
+                    cmd_bench(cfg, args or input("IA a medir (temporada, #color o nombre de un estático) y partidas opcionales: ").split())
                 elif choice == "10":
                     cmd_ladder(cfg, args)
                 elif choice == "11":
                     cmd_disk(cfg)
+                elif choice == "12":
+                    cmd_statics(cfg)
                 elif choice in ("0", "q"):
                     return
                 elif choice:
@@ -417,11 +485,13 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         return _read_only(cfg, lambda conn, out: reports.render_season(conn, out, int(argv[1])))
     if cmd == "play":
-        n = _positive_int(argv[1:2])
-        if len(argv) > 1 and n is None:
-            print("Uso: python -m evolution play [N]", file=sys.stderr)
+        arg = argv[1] if len(argv) > 1 else None
+        if arg is not None and not (arg.isdigit() and int(arg) > 0):
+            return cmd_play(cfg, None, arg)               # nombre de un bot estático
+        if len(argv) > 2:
+            print("Uso: python -m evolution play [N|nombre]", file=sys.stderr)
             return 2
-        return cmd_play(cfg, n)
+        return cmd_play(cfg, int(arg) if arg else None)
     if cmd == "fight":
         return cmd_fight(cfg, argv[1:])
     if cmd == "testleague":
@@ -437,6 +507,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_bench(cfg, argv[1:])
     if cmd == "ladder":
         return cmd_ladder(cfg, argv[1:])
+    if cmd == "statics":
+        return cmd_statics(cfg)
     if cmd == "disk":
         return cmd_disk(cfg)
     if cmd == "prune":

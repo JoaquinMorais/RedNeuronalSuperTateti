@@ -142,6 +142,33 @@ A ~390 temporadas/hora una noche son miles de temporadas. Qué crece y cómo se 
 3. **Aviso**: al empezar cada temporada se avisa si alguna IA tiene pesos que desbordan.
 La cabeza de valor no se toca (no interviene en la jugada).
 
+## Bots estáticos (`models_statics/`): la "piedra en el zapato"
+Jugadores con **lógica propia** (sin red neuronal ni mutación) que compiten junto a las redes para que estas aprendan a jugar contra un rival con criterio. Cada bot es un archivo `.py` en `models_statics/` con una clase que hereda de `StaticBot` (ver `base.py` y el ejemplo `wall-e.py`):
+- `NAME`: el nombre que se muestra en la Liga, Copa, Recopa, tablas, títulos, etc. (puede ser `WALL-E`, `BocaJrs`, lo que quieras; no es un color).
+- `COLOR1` / `COLOR2`: el nombre se pinta de a 2 letras alternando los colores (`WA` · `LL` · `-E`). `COLOR1` además es la **identidad** del bot en la base de datos: debe ser único en toda la historia (no puede coincidir con el de ninguna red ni de otro bot).
+- `choose(game) -> (tablero, casilla)`; el azar sale siempre de `self.rng`, que el torneo siembra **por partida**: el bot varía entre partidas, pero una partida interrumpida se repite idéntica al reanudar.
+- Un archivo con errores se ignora (se informa con `12`/`statics`) y no frena a los demás ni al entrenamiento.
+
+**Añadir y ver**
+| Menú / comando | Qué hace |
+|---|---|
+| `7 BocaJrs` · `addai BocaJrs` | Registra el bot para la **próxima temporada** (por nombre, sin importar mayúsculas ni `-`/`_`). Se puede mezclar con redes: `7 BocaJrs models/mi_ia.pth`. |
+| `7 --cancel BocaJrs` | Lo quita si esa temporada aún no se creó. |
+| `12` · `statics` | Bots disponibles, sus colores y estado: sin registrar, pendiente, compitiendo o afuera. |
+
+**Reglas**
+- Cada estático **suma un cupo** a la temporada: con `k` extras hay `20 + k` equipos (Liga más larga y grupos de Copa más grandes, igual que con redes añadidas; máximo 12 extras entre redes añadidas y estáticos).
+- **No se multiplican.** Las redes siguen igual: se conservan las **7 mejores redes** y se reproducen 5/3/2/2/1 según su puesto *entre las redes* (los estáticos no ocupan esos cupos).
+- **Siguen** en la temporada siguiente mientras terminen dentro de los primeros **7 + S** puestos de la tabla anual (`S` = cantidad de estáticos que jugaron; con uno, el top 8). Si quedan afuera, salen y la composición vuelve a 20 (o a 20 + los estáticos que sigan).
+- Compiten por su clasificación y **ganan títulos** (Liga, Copa, Recopa) como cualquiera; se ven en el ranking de campeones (`3`, columna *Tipo*) y como insignia `BocaJrs:02L:01C:00RC`.
+- Un estático que salió puede volver a añadirse (conserva su identidad e historial).
+- El código de cada bot se registra con su hash: si lo editás, el entrenamiento avisa y compite con la versión actual.
+
+**Cómo se invocan en el menú**: un **número de temporada** elige siempre la **mejor red** de esa tabla anual (aunque haya ganado un estático); un estático **solo se invoca escribiendo su nombre**. Vale en todas las opciones:
+`4 BocaJrs` (jugar contra él) · `5 311 BocaJrs` (pelea) · `5 1 311 BocaJrs` (3 o más IA = mini liga todos contra todos) · `6 1 BocaJrs` (liga de prueba con random) · `9 BocaJrs 300` (medirlo contra los bots fijos) · `10 5 40 BocaJrs` (torneo maestro con el estático de referencia). También sirve probar un bot **antes de registrarlo**: si existe en `models_statics/`, se resuelve por su nombre.
+
+**Tipo en la base de datos**: `individuals.ia_type` = `neuronal` (las redes que venían entrenándose, incluidas las importadas) o `estatico`. Un estático no tiene archivo de pesos (`model_file = static:<archivo>`); el mejor histórico, la medición contra bots fijos, la limpieza de modelos y el torneo maestro consideran solo redes. En Docker, `models_statics/` se monta en el contenedor: añadir un bot nuevo no requiere reconstruir la imagen.
+
 ## Pruebas
 ```bash
 TEST_DATABASE_URL=postgresql://usuario:clave@host:5432/base_de_pruebas python -m pytest tests -q

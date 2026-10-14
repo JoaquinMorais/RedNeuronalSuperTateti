@@ -53,6 +53,7 @@ class Config:
     color_tiers: dict = field(default_factory=lambda: dict(DEFAULT_TIERS))
     parent_policy: ParentPolicy = field(default_factory=ParentPolicy)
     retention_seasons: int = 10          # temporadas que se guarda el .pth de una IA expulsada (0 = nunca borrar)
+    statics_dir: Path = Path(__file__).resolve().parent.parent / "models_statics"   # bots estáticos (un .py por bot)
     protect_every: int = 1               # 1 = se conservan TODOS los campeones/1.º de tabla anual; K = solo los de temporadas múltiplo de K
     compact_after: int = 0               # >0: en temporadas más viejas que N se borran las jugadas y el historial de fechas de la BD
     champions_top: int = 30              # filas del ranking de campeones
@@ -116,6 +117,8 @@ def load_config(env: dict | None = None) -> Config:
             kw[field] = int(env[var])
     if "MUTATION_NORM_THRESHOLD" in env:
         kw["mutation_norm_threshold"] = float(env["MUTATION_NORM_THRESHOLD"])
+    if "STATICS_DIR" in env:
+        kw["statics_dir"] = Path(env["STATICS_DIR"])
     if "OUTPUT" in env:
         kw["output"] = env["OUTPUT"].strip().lower()
     if "PLAY_PORT" in env:

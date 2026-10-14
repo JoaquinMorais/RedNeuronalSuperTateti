@@ -98,7 +98,7 @@ def test_vista_de_temporada(reference_season, conn):
     # tabla anual: 7 conservadas y 13 hijos en total, y los hijos por padre coinciden con la BD
     annual = txt.split("Tabla anual")[1]
     assert annual.count("se conserva") >= 7
-    assert "Se conservan 7 · descendientes 13 · siguiente generación 20 IA" in annual
+    assert "Se conservan 7 redes · descendientes 13 · siguiente generación 20 IA" in annual
     rows = [l for l in annual.splitlines() if re.match(r"\s+\d+\s+#", l)]
     assert len(rows) == 20
     hijos = sum(int(m.group(1)) for l in rows for m in [re.search(r"(\d+) hijos?", l)] if m)

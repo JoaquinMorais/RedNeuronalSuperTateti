@@ -198,11 +198,7 @@ DO $$ BEGIN
              AND conrelid = 'individuals'::regclass) THEN
     ALTER TABLE individuals DROP CONSTRAINT individuals_kind_check;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'individuals_kind_values'
-                 AND conrelid = 'individuals'::regclass) THEN
-    ALTER TABLE individuals ADD CONSTRAINT individuals_kind_values
-        CHECK (kind IN ('founder_seed','founder_random','mutant','imported'));
-  END IF;
+  -- (la restricción vigente de `kind` se define más abajo, junto con el tipo de IA)
 END $$;
 
 -- IA añadidas a mano para una temporada futura
@@ -230,3 +226,54 @@ CREATE TABLE IF NOT EXISTS season_benchmarks (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (season_id, subject, opponent)
 );
+
+-- ===== Tipos de IA: 'neuronal' (las que evolucionan) y 'estatico' (bots con lógica propia, models_statics/) =====
+ALTER TABLE individuals ADD COLUMN IF NOT EXISTS ia_type TEXT NOT NULL DEFAULT 'neuronal';
+ALTER TABLE individuals ADD COLUMN IF NOT EXISTS static_name TEXT;            -- nombre que se muestra (p. ej. WALL-E)
+ALTER TABLE individuals ADD COLUMN IF NOT EXISTS static_color2 CHAR(7);       -- 2.º color del nombre (el 1.º es la identidad: individuals.color)
+ALTER TABLE individuals ADD COLUMN IF NOT EXISTS static_slug TEXT;            -- archivo en models_statics/ (sin .py)
+ALTER TABLE individuals ADD COLUMN IF NOT EXISTS static_code_sha256 TEXT;     -- hash del código al registrarlo
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'individuals_ia_type_values'
+                 AND conrelid = 'individuals'::regclass) THEN
+    ALTER TABLE individuals ADD CONSTRAINT individuals_ia_type_values CHECK (ia_type IN ('neuronal','estatico'));
+  END IF;
+  -- kind: nuevo valor 'static'
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'individuals_kind_values'
+             AND conrelid = 'individuals'::regclass) THEN
+    ALTER TABLE individuals DROP CONSTRAINT individuals_kind_values;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'individuals_kind_values_v2'
+                 AND conrelid = 'individuals'::regclass) THEN
+    ALTER TABLE individuals ADD CONSTRAINT individuals_kind_values_v2
+        CHECK (kind IN ('founder_seed','founder_random','mutant','imported','static'));
+  END IF;
+  -- un estático puede volver en temporadas distintas: la unicidad pasa a (temporada, individuo)
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'season_additions_individual_id_key'
+             AND conrelid = 'season_additions'::regclass) THEN
+    ALTER TABLE season_additions DROP CONSTRAINT season_additions_individual_id_key;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'season_additions_season_individual_key'
+                 AND conrelid = 'season_additions'::regclass) THEN
+    ALTER TABLE season_additions ADD CONSTRAINT season_additions_season_individual_key UNIQUE (season_number, individual_id);
+  END IF;
+  -- plan de la siguiente generación: nuevo rol 'static' y más de 20 posiciones
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'evolution_plan_role_check'
+             AND conrelid = 'evolution_plan'::regclass) THEN
+    ALTER TABLE evolution_plan DROP CONSTRAINT evolution_plan_role_check;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'evolution_plan_role_values'
+                 AND conrelid = 'evolution_plan'::regclass) THEN
+    ALTER TABLE evolution_plan ADD CONSTRAINT evolution_plan_role_values CHECK (role IN ('survivor','child','static'));
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'evolution_plan_position_check'
+             AND conrelid = 'evolution_plan'::regclass) THEN
+    ALTER TABLE evolution_plan DROP CONSTRAINT evolution_plan_position_check;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'evolution_plan_position_range'
+                 AND conrelid = 'evolution_plan'::regclass) THEN
+    ALTER TABLE evolution_plan ADD CONSTRAINT evolution_plan_position_range CHECK (position BETWEEN 1 AND 64);
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS individuals_static_name_uq ON individuals (lower(static_name)) WHERE ia_type = 'estatico';

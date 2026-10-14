@@ -1,0 +1,35 @@
+# ===== Contexto de build de Docker =====
+# No enviar al daemon ni copiar a la imagen lo que no se usa en runtime.
+
+# Git
+.git
+.gitignore
+
+# Cachés y bytecode de Python
+**/__pycache__/
+#*.py[cod]
+#*.egg-info/
+#.pytest_cache/
+#.mypy_cache/
+#.ruff_cache/
+
+# Variables de entorno locales (secretos/config del host)
+#.env
+#.env.*
+
+# Modelos y artefactos pesados: el contenedor los monta por volumen o se generan en runtime
+#models/
+#models/*/
+#old_models/
+#training/
+#trainPuzzles/checkpoints/
+
+# Pesos y sidecars de modelos (el seed se monta desde ./model.pth)
+#*.pth
+#trainPuzzles/*.json
+#trainPuzzles/checkpoints/*/
+
+# Repos de referencia / borradores no usados por la imagen
+#models_statics/RiverPt/
+#debug_*.py
+#*_old.py

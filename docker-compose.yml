@@ -46,6 +46,7 @@ services:
     volumes:
       - ${MODELS_HOST_DIR:-./models}:/app/models   # volumen persistente de modelos (visible en el host)
       - ./model.pth:/seed/model.pth:ro        # red ya entrenada que siembra la 1.ª generación
+      - ./models_statics:/app/models_statics:ro   # bots estáticos: añadir uno nuevo no requiere reconstruir la imagen
 
 volumes:
   pgdata:

@@ -173,6 +173,17 @@ def test_revision_phase_loguea_rev(capsys):
     assert "[REV]" in capsys.readouterr().out
 
 
+def test_train_level_loguea_cada_n_epochs(capsys):
+    g = mate_in_1_position()
+    all_moves = tuple(int(m) for m in g.get_valid_moves().nonzero()[0])
+    p = make_puzzle(g, 1, all_moves)              # acierto siempre 1.0: sin mejoras nuevas
+    net = SuperTatetiNet()
+    trainer = T.PuzzleTrainer(net, seed=0)
+    args = T.parse_args(["--max-epochs", "30", "--min-epochs", "99", "--log-every", "10"])
+    T.train_level(net, trainer, args, 1, [p, p], [p], [p], 0.0, 0.95)
+    assert capsys.readouterr().out.count("N1 ep") == 4        # epoch 1 (mejor) + 10, 20 y 30
+
+
 def test_accuracy_por_lotes_coincide_con_una_a_una_y_usa_entrada_canonica():
     from trainPuzzles.tests.test_canon import sample_mates
     ones, _ = sample_mates(6, 0)
@@ -198,3 +209,48 @@ def test_train_epoch_corre_con_y_sin_aumento_y_valor_apagado_por_defecto():
         trainer = T.PuzzleTrainer(net, lr=1e-2, seed=0, augment=aug)
         loss, ploss, vloss = trainer.train_epoch([p, p, p, p], batch_size=2)
         assert ploss == ploss and abs(loss - ploss) < 1e-6        # value_coef = 0 por defecto
+
+
+def test_dropout_no_cambia_el_state_dict():
+    a = SuperTatetiNet(dropout=0.0)
+    b = SuperTatetiNet(dropout=0.2)
+    assert set(a.state_dict()) == set(b.state_dict())
+    assert all(a.state_dict()[k].shape == b.state_dict()[k].shape for k in a.state_dict())
+
+
+def test_dropout_en_eval_es_determinista():
+    torch.manual_seed(0)
+    net = SuperTatetiNet(dropout=0.5).eval()
+    p = make_puzzle(mate_in_1_position(), 1, [2 * 9 + 2])
+    s = torch.from_numpy(p.state).unsqueeze(0)
+    m = torch.from_numpy(p.mask).unsqueeze(0)
+    with torch.no_grad():
+        pa, _ = net(s, m)
+        pb, _ = net(s, m)
+    assert torch.equal(pa, pb)
+
+
+def test_puzzle_trainer_aplica_weight_decay():
+    net = SuperTatetiNet()
+    trainer = T.PuzzleTrainer(net, lr=1e-2, seed=0, weight_decay=1e-4)
+    assert trainer.optimizer.param_groups[0]["weight_decay"] == 1e-4
+
+
+def test_train_level_plateau_stop_corta_el_nivel():
+    g = mate_in_1_position()
+    all_moves = tuple(int(m) for m in g.get_valid_moves().nonzero()[0])
+    p = make_puzzle(g, 1, all_moves)              # acierto siempre 1.0: nunca mejora
+    net = SuperTatetiNet()
+    trainer = T.PuzzleTrainer(net, seed=0)
+    args = T.parse_args(["--min-epochs", "99", "--max-epochs", "0", "--plateau-stop", "2"])
+    res = T.train_level(net, trainer, args, 1, [p, p], [p], [p], 0.0, 0.95)
+    assert res["plateau_stopped"] is True
+    assert res["mastered"] is False
+    assert res["epochs"] == 3
+
+
+def test_eval_seed_por_defecto_igual_a_seed():
+    a = T.parse_args(["--seed", "5"])
+    assert T._eval_seed(a) == 5
+    b = T.parse_args(["--seed", "5", "--eval-seed", "99"])
+    assert T._eval_seed(b) == 99

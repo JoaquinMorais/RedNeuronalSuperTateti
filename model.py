@@ -26,9 +26,15 @@ def _canonicalize(x: torch.Tensor) -> torch.Tensor:
 
 
 class SuperTatetiNet(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout: float = 0.0):
         super().__init__()
-        
+
+        # Dropout de entrenamiento (0 = desactivado). Se aplica en `forward` de forma
+        # FUNCIONAL (no se agregan módulos `nn.Dropout`) para que el `state_dict` siga
+        # teniendo exactamente las mismas claves y formas: no rompe checkpoints ni la
+        # firma de arquitectura de `evolution.modelstore`.
+        self.dropout_p = float(dropout)
+
         # Capas compartidas
         self.shared = nn.Sequential(
             nn.Linear(100, 256),
@@ -63,7 +69,11 @@ class SuperTatetiNet(nn.Module):
           value:  evaluación de la posición       (batch, 1)
         """
         x = _canonicalize(x)
-        shared = self.shared(x)
+        shared = x
+        for m in self.shared:
+            shared = m(shared)
+            if self.dropout_p > 0.0:
+                shared = F.dropout(shared, p=self.dropout_p, training=self.training)
         
         # Rama de valor
         value = self.value_head(shared)

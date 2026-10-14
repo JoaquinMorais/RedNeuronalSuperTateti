@@ -97,6 +97,8 @@ python -m trainPuzzles --levels 4 --threshold 0.9 --init model.pth
 | `--min-epochs` | `15` | Epochs mínimos en un nivel antes de poder avanzar. |
 | `--max-epochs` | `0` | Tope de seguridad por nivel; `0` = sin tope (entrena hasta dominar). Si se alcanza sin dominar, se detiene el currículo. |
 | `--plateau-patience` | `10` | Avisa si pasan N epochs sin mejorar el mejor acierto. |
+| `--plateau-stop` | `0` | Si pasan N epochs sin mejorar el mejor acierto, **corta el nivel y la corrida** (guarda el mejor estado). `0` = off (no corta nunca). Útil para el ciclo de reintento con más datos. |
+| `--log-every` | `10` | La línea por epoch de `[TRAIN]` se imprime 1 de cada N epochs (`<=0` = todas). Los hitos (nuevo mejor, dominado, plateau, parada) se imprimen siempre. |
 | `--revision-epochs` | `6` | Epochs de revisión de niveles viejos (anti-olvido) tras dominar cada nivel. |
 | `--revision-puzzles` | `500` | Puzzles por fase de revisión (repartidos entre los niveles viejos). |
 | `--big` | `0.20` | Cambio (en acierto) para clasificar "mejoró/empeoró mucho". |
@@ -106,12 +108,16 @@ python -m trainPuzzles --levels 4 --threshold 0.9 --init model.pth
 | `--no-augment` | off | Desactiva las simetrías D4 (por defecto, una al azar por muestra y epoch). |
 | `--batch-size` | `64` | Tamaño de lote. |
 | `--lr` | `3e-4` | Learning rate (Adam). |
+| `--dropout` | `0.0` | Dropout **funcional** en las capas compartidas (solo entrenando; en eval/inferencia está apagado). No agrega módulos: el `state_dict` queda idéntico. `0` = off. |
+| `--weight-decay` | `0.0` | Penalización L2 de Adam (weight decay). `0` = off. |
 | `--value-coef` | `0.0` | Peso de la pérdida de la cabeza de valor (0 = off). |
 | `--replay-frac` | `0.30` | Fracción de puzzles de niveles previos en cada nivel (anti-olvido). |
 | `--min-turn` | `16` | Solo se resuelven posiciones con turno ≥ este valor (ahorra tiempo). |
 | `--solver-max-nodes` | `120000` | Presupuesto de nodos del solver por posición (`0` = sin límite). |
-| `--games-budget` | `8000` | Tope de partidas aleatorias por generación. |
-| `--seed` | `0` | Semilla (generación y mezcla reproducibles). |
+| `--games-budget` | `0` | Tope duro de partidas aleatorias por generación. **`0` = sin tope**: juega hasta juntar `--puzzles-per-level` (con `--max-games` como seguridad). Un valor `>0` corta a esa cantidad de partidas. |
+| `--max-games` | `200000` | Tope de seguridad de partidas **solo** cuando `--games-budget=0`. |
+| `--seed` | `0` | Semilla (generación de train y mezcla reproducibles). |
+| `--eval-seed` | `= --seed` | Semilla del set de **evaluación**. Fijala para comparar entre corridas con datos de train distintos (p. ej. reintentos). |
 
 ## Entrada canónica y simetrías (importante)
 
@@ -282,6 +288,50 @@ generación actual y dejan el mejor modelo y el reporte.
   `play.py` y con `evolution.modelstore.load_net`.
 - Además del `.pth` final se guarda el **mejor checkpoint por nivel**
   (`<out>_levelN_best.pth`) y un **reporte** `<out>_report.json`.
+
+## A/B de regularización
+
+Para medir si `--dropout`/`--weight-decay` ayudan a generalizar (y no empeoran), corré dos
+veces con el **mismo `--eval-seed`, `--seed` y dataset**, cambiando solo la regularización:
+
+```bash
+# Control
+docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
+  -v ./trainPuzzles:/app/trainPuzzles trainer \
+  python -m trainPuzzles --levels 1 --max-level 2 --threshold 0.90 \
+    --games-budget 0 --max-games 50000 --puzzles-per-level 10000 \
+    --plateau-stop 1500 --seed 0 --eval-seed 0 \
+    --init trainPuzzles/checkpoints/puzzle_canon.pth \
+    --out  trainPuzzles/checkpoints/ab_control.pth
+
+# Tratamiento (dropout + weight decay)
+docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
+  -v ./trainPuzzles:/app/trainPuzzles trainer \
+  python -m trainPuzzles --levels 1 --max-level 2 --threshold 0.90 \
+    --games-budget 0 --max-games 50000 --puzzles-per-level 10000 \
+    --plateau-stop 1500 --seed 0 --eval-seed 0 \
+    --dropout 0.2 --weight-decay 1e-4 \
+    --init trainPuzzles/checkpoints/puzzle_canon.pth \
+    --out  trainPuzzles/checkpoints/ab_dropout.pth
+```
+
+Comparar en mate-2 el `best`/`final` de `ab_control_report.json` vs `ab_dropout_report.json`
+(generaliza mejor el que tenga mayor acierto de evaluación con menor brecha train/eval).
+
+## Reintento automático con más datos
+
+`retrain_loop.sh` repite el entrenamiento de mate-2 subiendo los datos cuando se estanca
+(`--plateau-stop 15000`), reanudando desde el mejor modelo de la ronda anterior:
+
+```bash
+setsid bash trainPuzzles/retrain_loop.sh > /tmp/opencode/retrain.log 2>&1 < /dev/null &
+```
+
+Parámetros por variable de entorno: `TARGET_LEVEL` (2), `ROUNDS` (5), `PPL` (25000),
+`PPL_STEP` (25000), `PLATEAU` (15000), `SEED`, `EVAL_SEED`, `DROPOUT` (0.2),
+`WEIGHT_DECAY` (1e-4), `WARM_START` (1). Cada ronda escribe
+`puzzle_retryN.pth` + `puzzle_retryN_report.json`; el loop corta cuando `TARGET_LEVEL` queda
+`mastered`.
 
 ## Pruebas
 

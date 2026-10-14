@@ -280,7 +280,8 @@ def test_cli_bench_progress_y_menu(reference_season, monkeypatch, capsys):
     assert main(["bench"]) == 2 and main(["bench", "1", "1"]) == 2 and main(["bench", "#010101"]) == 1
     assert main(["progress"]) == 0 and "PROGRESO" in capsys.readouterr().out
     assert main(["progress", "x"]) == 2 and main(["progress", "--backfill", "0"]) == 2
-    assert main(["ladder", "x"]) == 2 and main(["ladder", "1", "99"]) == 2
+    assert main(["ladder", "1", "2", "3"]) == 2 and main(["ladder", "1", "99"]) == 2
+    assert main(["ladder", "x"]) == 1 and "No existe ninguna IA estática" in capsys.readouterr().err        # "x" ahora es un nombre
     assert main(["ladder"]) == 1 and "al menos 3" in capsys.readouterr().out
     answers = iter(["8", "9 1 4", "10", "11", "0"])
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))

@@ -1,10 +1,12 @@
 """Salida por terminal. Funciona con y sin colores (sin TTY, NO_COLOR, Docker sin -t)."""
 from __future__ import annotations
 
+import re
 import sys
 
 from . import colors as colormod
 from . import titles as titlemod
+from models_statics.base import split_name
 
 RESET = "\x1b[0m"
 BOLD = "\x1b[1m"
@@ -55,6 +57,8 @@ class Display:
         self.stream = stream or sys.stdout
         # {color: {"L": [...], "C": [...], "RC": [...]}}: IA que ya ganaron algo (ver titles.py)
         self.titles: dict = {}
+        # {color1: {"name": "WALL-E", "color2": "#3b6fb6"}}: bots estáticos (se muestran por NOMBRE, en dos colores)
+        self.statics: dict = {}
 
     def shown(self, needed: str) -> bool:
         """¿Se imprime lo que corresponde al nivel ``needed``?"""
@@ -72,8 +76,9 @@ class Display:
 
     # -- estilo ----------------------------------------------------------
     def tag(self, hex_color: str, badge: bool = True) -> str:
-        """Texto visible de una IA: '#7d48e6' o '#7d48e6:01L:00C:00RC' si ya ganó algo."""
-        return hex_color + (titlemod.badge(self.titles.get(hex_color)) if badge else "")
+        """Texto visible de una IA: '#7d48e6' (red) o 'WALL-E' (estático), más ':01L:00C:00RC' si ya ganó algo."""
+        name = self.statics.get(hex_color, {}).get("name", hex_color)
+        return name + (titlemod.badge(self.titles.get(hex_color)) if badge else "")
 
     def paint(self, text: str, hex_color: str) -> str:
         if not self.color:
@@ -81,16 +86,41 @@ class Display:
         r, g, b = colormod.to_rgb(hex_color)
         return f"\x1b[38;2;{r};{g};{b}m{text}{RESET}"
 
+    def _paint_static(self, hex_color: str, name: str, rest: str = "") -> str:
+        """Nombre pintado de a 2 letras alternando COLOR1/COLOR2; la insignia/sufijo (``rest``) va en COLOR1."""
+        c2 = self.statics[hex_color]["color2"]
+        return "".join(self.paint(seg, c) for seg, c in split_name(name, hex_color, c2)) + (self.paint(rest, hex_color) if rest else "")
+
     def ia(self, hex_color: str, suffix: str = "", badge: bool = True) -> str:
         t = self.tag(hex_color, badge)
         if not self.color:
             return f"{t}{suffix}"
+        if hex_color in self.statics:
+            name = self.statics[hex_color]["name"]
+            return self.paint("■ ", hex_color) + self._paint_static(hex_color, name, t[len(name):] + suffix)
         return self.paint(f"■ {t}{suffix}", hex_color)
 
+    def paint_tags(self, line: str) -> str:
+        """Pinta dentro de un texto ya alineado cada IA: '#rrggbb[:..RC]' y los NOMBRES de estáticos."""
+        if not self.color:
+            return line
+        badge = r"(?::\d\dL:\d\dC:\d\dRC)?"
+        names = {v["name"]: k for k, v in self.statics.items()}
+        pattern = "|".join([r"(#[0-9a-f]{6})" + badge] + [re.escape(n) + badge for n in sorted(names, key=len, reverse=True)])
+
+        def repl(m):
+            txt = m.group(0)
+            if m.group(1):
+                return self.paint(txt, m.group(1))
+            base = re.match(r"[^:]+", txt).group(0)
+            return self._paint_static(names[base], base, txt[len(base):])
+        return re.sub(pattern, repl, line)
+
     def id_width(self) -> int:
-        """Ancho de la columna 'IA' en las tablas (con insignia si alguien tiene títulos)."""
+        """Ancho de la columna 'IA' en las tablas (nombre más largo + insignia si alguien tiene títulos)."""
         longest = max((len(titlemod.badge(t)) for t in self.titles.values()), default=0)
-        return 7 + longest
+        name = max([7] + [len(v["name"]) for v in self.statics.values()])
+        return name + longest
 
     def cell(self, hex_color: str, width: int | None = None, badge: bool = True) -> str:
         """``ia`` rellenada hasta ``width`` columnas VISIBLES (los códigos ANSI no cuentan)."""
@@ -168,12 +198,18 @@ class Display:
                                 f"-> campeón {self.ia(ev['champion'])} ({how})"))
 
     # -- resúmenes -------------------------------------------------------
-    def header(self, *, season: dict, master_seed: int, cfg, db_status: str, progress: dict, resumed: bool) -> None:
+    def header(self, *, season: dict, master_seed: int, cfg, db_status: str, progress: dict, resumed: bool,
+               statics: tuple = ()) -> None:
         if not self.shown("fecha"):
             return
         self.banner(f"TEMPORADA {season['number']} {'(REANUDADA)' if resumed else '(NUEVA)'}")
         n, md_total = season.get("n_participants") or 20, season.get("league_matchdays") or 38
-        extra = f"  ({n - 20} IA añadida{'s' if n - 20 != 1 else ''} a la generación normal)" if n != 20 else ""
+        extra = ""
+        if n != 20:
+            added = n - 20 - len(statics)
+            bits = ([f"{len(statics)} estático{'s' if len(statics) != 1 else ''}: " + ", ".join(self.ia(c) for c in statics)] if statics else []) \
+                + ([f"{added} red{'es' if added != 1 else ''} añadida{'s' if added != 1 else ''}"] if added else [])
+            extra = f"  (20 de la generación + {' + '.join(bits)})"
         self.emit(f"  IA en la temporada      : {n}{extra}")
         self.emit(f"  Etapa                   : {season['stage']}  (última fecha cerrada: {season['current_matchday']}/{md_total})")
         sizes = (season.get("draw_meta") or {}).get("format", {}).get("group_sizes", [5, 5, 5, 5])
@@ -225,6 +261,10 @@ class Display:
         self.emit("  Descendientes nuevos (13):")
         for ch in d["children"]:
             self.emit(f"    {self.ia(ch['color'])} <- hijo de {self.ia(ch['parent'])} (mutación {ch['level']})")
+        if d.get("statics_stay"):
+            self.emit(f"  Estáticos que siguen (puesto ≤ {d['zone']}, no se reproducen): " + ", ".join(self.ia(c) for c in d["statics_stay"]))
+        if d.get("statics_leave"):
+            self.emit("  Estáticos que salen: " + ", ".join(f"{self.ia(c)} (puesto {pos})" for c, pos in d["statics_leave"]))
         if d.get("historical"):
             self.emit(f"  Nuevo mejor histórico: {self.ia(d['historical']['color'])} con {d['historical']['total']} pts -> {d['historical']['file']}")
         if d.get("bench"):

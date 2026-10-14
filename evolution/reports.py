@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from . import rules
 from . import titles as titlemod
 from .display import ROUND_NAME, Display
 
@@ -44,6 +45,25 @@ def individual_status(conn) -> dict[str, dict]:
     return {r["color"]: {"last_season": r["last_season"], "expelled": r["expelled"]} for r in rows}
 
 
+def load_statics(conn) -> dict[str, dict]:
+    """{color1: {"name", "color2", "slug"}} de todos los bots estáticos registrados (para mostrarlos por nombre)."""
+    try:
+        rows = conn.execute("SELECT color, static_name, static_color2, static_slug FROM individuals WHERE ia_type='estatico'").fetchall()
+    except Exception:  # BD anterior a los estáticos (sin la columna): no hay ninguno
+        conn.rollback()
+        return {}
+    return {r["color"]: {"name": r["static_name"], "color2": r["static_color2"], "slug": r["static_slug"]} for r in rows}
+
+
+def ensure_statics(conn, out) -> None:
+    """Cada vista se basta sola: registra en ``out`` los nombres de los estáticos para mostrarlos por nombre."""
+    out.statics = {**load_statics(conn), **out.statics}
+
+
+def type_label(out, color: str) -> str:
+    return "estático" if color in out.statics else "red"
+
+
 def titles_through(conn, upto: int | None = None) -> dict:
     return titlemod.build_title_index(champion_rows(conn, upto))
 
@@ -57,6 +77,7 @@ def _md_total(season_row) -> int:
 
 
 def render_status(conn, out: Display) -> None:
+    ensure_statics(conn, out)
     champs = {r["number"]: r for r in champion_rows(conn)}
     seasons = conn.execute("SELECT * FROM seasons ORDER BY number").fetchall()
     if not seasons:
@@ -87,6 +108,7 @@ def _seasons_txt(nums: list[int]) -> str:
 
 def render_champions(conn, out: Display, top: int = 30) -> None:
     """Campeones por temporada (las ``top`` más recientes) y ranking de campeones (los ``top`` mejores)."""
+    ensure_statics(conn, out)
     rows = champion_rows(conn)
     out.banner("CAMPEONES")
     if not rows:
@@ -94,19 +116,21 @@ def render_champions(conn, out: Display, top: int = 30) -> None:
         return
     shown = rows[-top:]
     out.section("Campeones de cada temporada" + (f" (las últimas {top} de {len(rows)})" if len(rows) > top else ""))
-    out.emit(f"  {'Temp':>4}  {'Liga':<10} {'Copa':<10} {'Subcampeón':<11} {'Recopa':<10}")
+    cw = max(10, max((len(out.tag(c, False)) for r in shown for c in (r["league"], r["cup"], r["runner_up"], r["recopa"])), default=10))
+    out.emit(f"  {'Temp':>4}  {'Liga':<{cw}} {'Copa':<{cw}} {'Subcampeón':<{cw}} {'Recopa':<{cw}}")
     for r in shown:
-        out.emit(f"  {r['number']:>4}  {out.cell(r['league'], 10, False)} {out.cell(r['cup'], 10, False)} "
-                 f"{out.cell(r['runner_up'], 11, False)} {out.cell(r['recopa'], 10, False)}")
+        out.emit(f"  {r['number']:>4}  {out.cell(r['league'], cw, False)} {out.cell(r['cup'], cw, False)} "
+                 f"{out.cell(r['runner_up'], cw, False)} {out.cell(r['recopa'], cw, False)}")
     status = individual_status(conn)
     ranking = titlemod.rank_champions(titlemod.build_title_index(rows))
     out.section("Ranking de campeones (prioridad: Liga, Copa, Recopa)")
-    out.emit(f"  {'Pos':>3}  {'IA':<10} {'Liga':>4} {'Copa':>4} {'Recopa':>6}  {'Estado':<15} Títulos")
+    nw = max(10, out.id_width() - max((len(titlemod.badge(t)) for t in out.titles.values()), default=0))
+    out.emit(f"  {'Pos':>3}  {'IA':<{nw}} {'Tipo':<8} {'Liga':>4} {'Copa':>4} {'Recopa':>6}  {'Estado':<15} Títulos")
     for pos, (color, t) in enumerate(ranking[:top], start=1):
         st = status.get(color)
         estado = "compitiendo" if st is None or not st["expelled"] else f"expulsada T{st['last_season']}"
         det = " · ".join(f"{name}: {_seasons_txt(t[k])}" for k, name in (("L", "Ligas"), ("C", "Copas"), ("RC", "Recopas")) if t[k])
-        out.emit(f"  {pos:>3}  {out.cell(color, 10, False)} {len(t['L']):>4} {len(t['C']):>4} {len(t['RC']):>6}  {estado:<15} {det}")
+        out.emit(f"  {pos:>3}  {out.cell(color, nw, False)} {type_label(out, color):<8} {len(t['L']):>4} {len(t['C']):>4} {len(t['RC']):>6}  {estado:<15} {det}")
     if len(ranking) > top:
         out.emit(out.dim(f"  Mostrando {top} de {len(ranking)} campeones. Para ver más: `champions N` (en el menú: `3 N`)."))
 
@@ -176,7 +200,7 @@ def render_bracket(ties: dict, out: Display) -> list[str]:
     lines = ["".join(head).rstrip()] + ["".join(r).rstrip() for r in grid]
     lines = [ln for ln in lines if ln.strip()]
     # Pintado: '#aabbcc' o '#aabbcc:01L:00C:00RC' completo con el color de la IA
-    return [_TAG.sub(lambda m: out.paint(m.group(0), m.group(1)), ln) for ln in lines]
+    return [out.paint_tags(ln) for ln in lines]
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +212,7 @@ def render_season(conn, out: Display, number: int) -> bool:
         out.emit(f"No existe la temporada {number}.")
         return False
     out.titles = titles_through(conn, number)  # insignias "al terminar" esa temporada
+    out.statics = load_statics(conn)           # los estáticos se muestran por su nombre (en dos colores)
     color = {r["id"]: r["color"] for r in conn.execute("SELECT id, color FROM individuals")}
     parts = conn.execute("SELECT * FROM season_participants WHERE season_id=%s", (s["id"],)).fetchall()
     sid = s["id"]
@@ -268,19 +293,61 @@ def render_season(conn, out: Display, number: int) -> bool:
     plan = conn.execute("SELECT * FROM evolution_plan WHERE season_id=%s", (sid,)).fetchall()
     kids = Counter(p["parent_id"] for p in plan if p["role"] == "child")
     survivors = {p["individual_id"] for p in plan if p["role"] == "survivor"}
-    out.emit(f"  {'Pos':>3}  {'IA':<{w}} {'Liga':>5} {'Copa':>5} {'Recopa':>7} {'TOTAL':>6}  Destino")
+    stay = {p["individual_id"] for p in plan if p["role"] == "static"}
+    out.emit(f"  {'Pos':>3}  {'IA':<{w}} {'Tipo':<8} {'Liga':>5} {'Copa':>5} {'Recopa':>7} {'TOTAL':>6}  Destino")
     for p in sorted(parts, key=lambda p: p["final_position"]):
         iid, n = p["individual_id"], kids.get(p["individual_id"], 0)
         if not plan:
             dest = "pendiente"
+        elif color[iid] in out.statics:
+            dest = "sigue (estático: no se reproduce)" if iid in stay else "sale"
         else:
             bits = ["se conserva"] if iid in survivors else []
             if n:
                 bits.append(f"{n} hijo{'s' if n != 1 else ''}")
             dest = " + ".join(bits) if bits else "sale"
-        out.emit(f"  {p['final_position']:>3}  {out.cell(color[iid], w)} {p['league_score']:>5} {p['cup_score']:>5} "
-                 f"{p['recopa_score']:>7} {p['total_score']:>6}  {dest}")
+        out.emit(f"  {p['final_position']:>3}  {out.cell(color[iid], w)} {type_label(out, color[iid]):<8} {p['league_score']:>5} "
+                 f"{p['cup_score']:>5} {p['recopa_score']:>7} {p['total_score']:>6}  {dest}")
     if plan:
-        out.emit(out.dim(f"  Se conservan {len(survivors)} · descendientes {sum(kids.values())} · "
+        zone = rules.SURVIVORS + sum(1 for p in parts if color[p["individual_id"]] in out.statics)
+        extra = f" · estáticos que siguen {len(stay)} (puesto ≤ {zone})" if any(color[p["individual_id"]] in out.statics for p in parts) else ""
+        out.emit(out.dim(f"  Se conservan {len(survivors)} redes · descendientes {sum(kids.values())}{extra} · "
                          f"siguiente generación {len(plan)} IA"))
     return True
+
+
+def render_statics(conn, out, cfg) -> None:
+    """Bots de ``models_statics/`` y su estado: sin registrar, pendiente, compitiendo o afuera."""
+    from . import additions, statics   # import tardío: evita ciclos
+    out.banner(f"BOTS ESTÁTICOS · {cfg.statics_dir}")
+    bots, errors = statics._scan(cfg.statics_dir)
+    for slug, err in errors.items():
+        out.emit(f"  ERROR en {slug}.py (se ignora): {err}")
+    if not bots:
+        out.emit("  No hay bots: poné un archivo .py (una clase que herede de StaticBot) en esa carpeta.")
+        return
+    for c in bots.values():
+        out.statics.setdefault(c.COLOR1, {"name": c.NAME, "color2": c.COLOR2, "slug": ""})
+    rows = {r["static_slug"]: r for r in conn.execute("SELECT * FROM individuals WHERE ia_type='estatico'").fetchall()}
+    pend = {r["color"]: r["season_number"] for r in additions.list_pending(conn)}
+    status = individual_status(conn)
+    titles = titles_through(conn)
+    out.emit(f"  {'Nombre':<{max(8, out.id_width())}}  {'Colores':<17} {'Archivo':<14} Estado")
+    for slug, c in bots.items():
+        r = rows.get(slug)
+        if r is None:
+            state = "sin registrar (añadir con `7 " + c.NAME + "`)"
+        elif r["color"] in pend:
+            state = f"pendiente: entra en la temporada {pend[r['color']]}"
+        elif r["color"] in status and not status[r["color"]]["expelled"]:
+            state = f"compitiendo (última temporada: {status[r['color']]['last_season']})"
+        elif r["color"] in status:
+            state = f"afuera desde la temporada {status[r['color']]['last_season']} (se puede volver a añadir)"
+        else:
+            state = "registrado"
+        t = titles.get(c.COLOR1)
+        extra = ""
+        if t:
+            extra = f"  · títulos: {len(t['L'])} Liga, {len(t['C'])} Copa, {len(t['RC'])} Recopa"
+        out.emit(f"  {out.cell(c.COLOR1, max(8, out.id_width()), False)}  {c.COLOR1}/{c.COLOR2:<8} {slug + '.py':<14} {state}{extra}")
+    out.emit(out.dim("  Se invocan SIEMPRE por su nombre (menú 4, 5, 6, 7, 9, 10): un número de temporada elige la mejor red."))

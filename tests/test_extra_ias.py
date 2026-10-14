@@ -83,7 +83,8 @@ def test_referencias_a_ia():
     assert sandbox.parse_ia_ref("12") == ("season", 12)
     assert sandbox.parse_ia_ref("#FFFFFF") == ("color", "#ffffff")
     assert sandbox.parse_ia_ref("a1b2c3") == ("color", "#a1b2c3")      # sin '#': la shell lo toma como comentario
-    for bad in ("#fff", "0", "abc", "#gggggg", "-3"):
+    assert sandbox.parse_ia_ref("BocaJrs") == ("name", "BocaJrs") and sandbox.parse_ia_ref("Wall_E") == ("name", "Wall_E")
+    for bad in ("#fff", "0", "#gggggg", "-3", "12ab%"):
         with pytest.raises(play.PlayError):
             sandbox.parse_ia_ref(bad)
 
@@ -210,7 +211,7 @@ def test_temporada_con_3_ia_anadidas_y_la_siguiente_vuelve_a_20(tmp_path):
         _check_extra_season(e, 1, 23)
         _check_extra_season(e, 2, 20)                                               # la temporada siguiente: 20 equipos
         txt = e.out.getvalue()
-        assert "3 IA añadidas" in txt and "grupos de 6/6/6/5" in txt and "FECHA 46 / 46" in txt
+        assert "3 redes añadidas" in txt and "grupos de 6/6/6/5" in txt and "FECHA 46 / 46" in txt
         assert "FECHA 38 / 38" in txt                                               # y la 2 es la normal
         # las importadas aparecen en la temporada y conservan identidad/archivo
         imp = e.q("SELECT color FROM individuals WHERE kind='imported'")

@@ -69,17 +69,28 @@ class MatchOutcome:
     duration_ms: float
 
 
+def choose_cell(player, game: SuperTateti) -> tuple[int, int]:
+    """(tablero, casilla) que juega ``player``: un bot (estático, aleatorio, táctico: tiene ``choose``)
+    o una red neuronal (``select_move``, sin MCTS)."""
+    if hasattr(player, "choose"):
+        b, c = player.choose(game)
+        if game.get_valid_moves()[b * 9 + c] != 1:
+            raise IllegalMoveError(f"El bot {type(player).__name__} eligió un movimiento ilegal: {(b, c)}")
+        return b, c
+    mv = select_move(player, game)
+    return mv // 9, mv % 9
+
+
 def play_match(net_x, net_o) -> MatchOutcome:
-    """``net_x`` comienza (X, jugador 1). Devuelve resultado, jugadas y duración."""
+    """``net_x`` comienza (X, jugador 1). Cada jugador es una red o un bot. Devuelve resultado, jugadas y duración."""
     t0 = time.perf_counter()
     game = SuperTateti()
     moves: list[int] = []
     while game.winner is None:
-        net = net_x if game.current_player == 1 else net_o
-        mv = select_move(net, game)
-        if not game.make_move(mv // 9, mv % 9):
-            raise IllegalMoveError(f"make_move rechazó {mv}")
-        moves.append(mv)
+        b, c = choose_cell(net_x if game.current_player == 1 else net_o, game)
+        if not game.make_move(b, c):
+            raise IllegalMoveError(f"make_move rechazó {(b, c)}")
+        moves.append(b * 9 + c)
     w = float(game.winner)
     result = X if w == 1.0 else O if w == -1.0 else DRAW
     return MatchOutcome(result, ",".join(map(str, moves)), len(moves),
