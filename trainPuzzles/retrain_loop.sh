@@ -10,7 +10,10 @@
 #   setsid bash trainPuzzles/retrain_loop.sh > /tmp/opencode/retrain.log 2>&1 < /dev/null &
 #
 # Parámetros (variables de entorno):
-#   TARGET_LEVEL=2  ROUNDS=5  PPL=25000  PPL_STEP=25000  PLATEAU=15000
+#   TARGET_LEVEL=2  ROUNDS=5  PPL=25000  PPL_STEP=25000
+#   MAX_EPOCHS=3000   (tope DURO de epochs por nivel y ronda: garantiza que la ronda
+#                      termine para poder pasar a la siguiente con más datos)
+#   PLATEAU=1500      (corte anticipado si el mejor acierto no mejora; opcional)
 #   SEED=0  EVAL_SEED=0  DROPOUT=0.2  WEIGHT_DECAY=1e-4  WARM_START=1
 #   THRESHOLD=0.90  MAX_LEVEL=3
 #   CANON_INIT=trainPuzzles/checkpoints/puzzle_canon.pth
@@ -21,7 +24,8 @@ TARGET_LEVEL="${TARGET_LEVEL:-2}"
 ROUNDS="${ROUNDS:-5}"
 PPL="${PPL:-25000}"
 PPL_STEP="${PPL_STEP:-25000}"
-PLATEAU="${PLATEAU:-15000}"
+MAX_EPOCHS="${MAX_EPOCHS:-3000}"
+PLATEAU="${PLATEAU:-1500}"
 SEED="${SEED:-0}"
 EVAL_SEED="${EVAL_SEED:-0}"
 DROPOUT="${DROPOUT:-0.2}"
@@ -54,7 +58,7 @@ while [ "$round" -le "$ROUNDS" ]; do
       --games-budget 0 --max-games "${maxg}" \
       --puzzles-per-level "${ppl}" \
       --dropout "${DROPOUT}" --weight-decay "${WEIGHT_DECAY}" \
-      --plateau-stop "${PLATEAU}" \
+      --max-epochs "${MAX_EPOCHS}" --plateau-stop "${PLATEAU}" \
       --seed "${seed}" --eval-seed "${EVAL_SEED}" \
       --init "${init}" --out "${out_cont}"
 

@@ -1,0 +1,44 @@
+{
+  "input_encoding": "canonical",
+  "init": "trainPuzzles/checkpoints/puzzle_canon.pth",
+  "out": "trainPuzzles/checkpoints/ab_dropout.pth",
+  "report": "trainPuzzles/checkpoints/ab_dropout_report.json",
+  "levels_requested": 1,
+  "max_level": 2,
+  "threshold": 0.9,
+  "retention_threshold": 0.9,
+  "patience": 2,
+  "min_epochs": 15,
+  "big": 0.2,
+  "small": 0.05,
+  "levels": [
+    {
+      "level": 1,
+      "baseline": 0.931,
+      "final": 0.921,
+      "delta": -0.010000000000000009,
+      "epochs": 88,
+      "mastered": true,
+      "reached": true,
+      "best": 0.921,
+      "best_epoch": 1,
+      "verdict": "no muestra un aprendizaje claro"
+    },
+    {
+      "level": 2,
+      "baseline": 0.666,
+      "final": 0.693,
+      "delta": 0.026999999999999913,
+      "epochs": 2075,
+      "mastered": false,
+      "reached": true,
+      "best": 0.693,
+      "best_epoch": 1905,
+      "verdict": "no muestra un aprendizaje claro"
+    }
+  ],
+  "avg_delta": 0.008499999999999952,
+  "verdict": "no muestra un aprendizaje claro",
+  "levels_reached": 2,
+  "levels_mastered": 1
+}

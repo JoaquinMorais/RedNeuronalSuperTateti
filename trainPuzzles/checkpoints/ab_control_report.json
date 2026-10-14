@@ -23,10 +23,22 @@
       "best": 0.925,
       "best_epoch": 15,
       "verdict": "no muestra un aprendizaje claro"
+    },
+    {
+      "level": 2,
+      "baseline": 0.666,
+      "final": 0.657,
+      "delta": -0.009000000000000008,
+      "epochs": 1530,
+      "mastered": false,
+      "reached": true,
+      "best": 0.657,
+      "best_epoch": 30,
+      "verdict": "no muestra un aprendizaje claro"
     }
   ],
-  "avg_delta": -0.006000000000000005,
+  "avg_delta": -0.007500000000000007,
   "verdict": "no muestra un aprendizaje claro",
-  "levels_reached": 1,
+  "levels_reached": 2,
   "levels_mastered": 1
 }
