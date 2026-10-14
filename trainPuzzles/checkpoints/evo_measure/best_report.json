@@ -1,0 +1,214 @@
+{
+  "config": {
+    "seed_model": "trainPuzzles/my_model.pth",
+    "out": "trainPuzzles/checkpoints/evo_measure/best.pth",
+    "report": null,
+    "population": 30,
+    "survivors": 10,
+    "generations": 2,
+    "parent_policy": null,
+    "epochs_per_gen": 10,
+    "batch_size": 64,
+    "lr": 0.0003,
+    "value_coef": 0.5,
+    "bootstrap_frac": 1.0,
+    "mutation_levels": {
+      "small": {
+        "rate": 0.1,
+        "sigma": 0.05
+      },
+      "medium": {
+        "rate": 0.3,
+        "sigma": 0.2
+      },
+      "large": {
+        "rate": 0.6,
+        "sigma": 0.6
+      }
+    },
+    "mutation_probs": {
+      "small": 0.5,
+      "medium": 0.35,
+      "large": 0.15
+    },
+    "mutate_value_head": false,
+    "mutation_norm_threshold": 4.0,
+    "levels": [
+      1
+    ],
+    "puzzles_per_level": 1500,
+    "eval_size": 300,
+    "test_size": 300,
+    "test_every": 1,
+    "min_turn": 16,
+    "solver_max_nodes": 120000,
+    "games_budget": 8000,
+    "seed": 0
+  },
+  "best_fitness": 0.63,
+  "best_gen": 2,
+  "best_id": 7,
+  "best_lineage": [
+    {
+      "id": 0,
+      "gen": 2,
+      "parent": null,
+      "level": "seed",
+      "fitness": 0.61
+    },
+    {
+      "id": 7,
+      "gen": 2,
+      "parent": 0,
+      "level": "small",
+      "fitness": 0.63
+    }
+  ],
+  "generations_run": 2,
+  "test_accuracy": {
+    "1": 0.6033333333333334,
+    "2": 0.6166666666666667
+  },
+  "history": [
+    {
+      "gen": 1,
+      "best_fitness": 0.61,
+      "mean_fitness": 0.5910000000000001,
+      "top": [
+        {
+          "id": 7,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.61
+        },
+        {
+          "id": 5,
+          "parent": 0,
+          "level": "medium",
+          "fitness": 0.6067
+        },
+        {
+          "id": 10,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.6067
+        },
+        {
+          "id": 12,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.6067
+        },
+        {
+          "id": 26,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.6067
+        },
+        {
+          "id": 0,
+          "parent": null,
+          "level": "seed",
+          "fitness": 0.6033
+        },
+        {
+          "id": 1,
+          "parent": 0,
+          "level": "medium",
+          "fitness": 0.6033
+        },
+        {
+          "id": 23,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.6033
+        },
+        {
+          "id": 2,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.6
+        },
+        {
+          "id": 25,
+          "parent": 0,
+          "level": "medium",
+          "fitness": 0.6
+        }
+      ],
+      "historical_best": 0.61,
+      "test_accuracy": 0.6033333333333334,
+      "seconds": 70.8
+    },
+    {
+      "gen": 2,
+      "best_fitness": 0.63,
+      "mean_fitness": 0.6032222222222221,
+      "top": [
+        {
+          "id": 7,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.63
+        },
+        {
+          "id": 45,
+          "parent": 23,
+          "level": "medium",
+          "fitness": 0.62
+        },
+        {
+          "id": 12,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.6167
+        },
+        {
+          "id": 31,
+          "parent": 7,
+          "level": "small",
+          "fitness": 0.6167
+        },
+        {
+          "id": 46,
+          "parent": 2,
+          "level": "medium",
+          "fitness": 0.6167
+        },
+        {
+          "id": 49,
+          "parent": 25,
+          "level": "medium",
+          "fitness": 0.6167
+        },
+        {
+          "id": 26,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.6133
+        },
+        {
+          "id": 10,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.61
+        },
+        {
+          "id": 0,
+          "parent": null,
+          "level": "seed",
+          "fitness": 0.61
+        },
+        {
+          "id": 25,
+          "parent": 0,
+          "level": "medium",
+          "fitness": 0.61
+        }
+      ],
+      "historical_best": 0.63,
+      "test_accuracy": 0.6166666666666667,
+      "seconds": 61.1
+    }
+  ]
+}

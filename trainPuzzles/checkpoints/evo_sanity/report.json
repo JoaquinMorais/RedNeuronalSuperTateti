@@ -1,0 +1,1418 @@
+{
+  "config": {
+    "seed_model": "trainPuzzles/my_model.pth",
+    "out": "trainPuzzles/checkpoints/evo_sanity/best.pth",
+    "out_test": "trainPuzzles/checkpoints/evo_sanity/best_test.pth",
+    "report": "trainPuzzles/checkpoints/evo_sanity/report.json",
+    "population": 30,
+    "survivors": 10,
+    "generations": 30,
+    "parent_policy": null,
+    "epochs_per_gen": 8,
+    "batch_size": 64,
+    "lr": 0.0003,
+    "value_coef": 0.5,
+    "bootstrap_frac": 1.0,
+    "mutation_levels": {
+      "small": {
+        "rate": 0.1,
+        "sigma": 0.05
+      },
+      "medium": {
+        "rate": 0.3,
+        "sigma": 0.2
+      },
+      "large": {
+        "rate": 0.6,
+        "sigma": 0.6
+      }
+    },
+    "mutation_probs": {
+      "small": 0.5,
+      "medium": 0.35,
+      "large": 0.15
+    },
+    "mutate_value_head": false,
+    "mutation_norm_threshold": 4.0,
+    "levels": [
+      1
+    ],
+    "puzzles_per_level": 6000,
+    "eval_pool_size": 4000,
+    "eval_size": 500,
+    "early_stop_size": 500,
+    "test_size": 2000,
+    "test_every": 1,
+    "min_turn": 16,
+    "solver_max_nodes": 120000,
+    "games_budget": 60000,
+    "min_large_frac": 0.25,
+    "patience": 12,
+    "seed": 0
+  },
+  "best_fitness": 0.664,
+  "best_gen": 10,
+  "best_id": 197,
+  "best_lineage": [
+    {
+      "id": 0,
+      "gen": 4,
+      "parent": null,
+      "level": "seed",
+      "fitness": 0.568
+    },
+    {
+      "id": 21,
+      "gen": 2,
+      "parent": 0,
+      "level": "small",
+      "fitness": 0.608
+    },
+    {
+      "id": 47,
+      "gen": 3,
+      "parent": 21,
+      "level": "medium",
+      "fitness": 0.638
+    },
+    {
+      "id": 57,
+      "gen": 5,
+      "parent": 47,
+      "level": "small",
+      "fitness": 0.606
+    },
+    {
+      "id": 93,
+      "gen": 7,
+      "parent": 57,
+      "level": "small",
+      "fitness": 0.616
+    },
+    {
+      "id": 118,
+      "gen": 10,
+      "parent": 93,
+      "level": "small",
+      "fitness": 0.648
+    },
+    {
+      "id": 180,
+      "gen": 10,
+      "parent": 118,
+      "level": "small",
+      "fitness": 0.636
+    },
+    {
+      "id": 197,
+      "gen": 10,
+      "parent": 180,
+      "level": "medium",
+      "fitness": 0.664
+    }
+  ],
+  "generations_run": 18,
+  "test_accuracy": {
+    "1": 0.605,
+    "2": 0.609,
+    "3": 0.612,
+    "4": 0.612,
+    "5": 0.612,
+    "6": 0.616,
+    "7": 0.616,
+    "8": 0.616,
+    "9": 0.616,
+    "10": 0.6155,
+    "11": 0.6155,
+    "12": 0.6155,
+    "13": 0.6155,
+    "14": 0.6155,
+    "15": 0.6155,
+    "16": 0.6155,
+    "17": 0.6155,
+    "18": 0.6155
+  },
+  "history": [
+    {
+      "gen": 1,
+      "best_fitness": 0.622,
+      "mean_fitness": 0.5922666666666667,
+      "diversity": 1,
+      "top": [
+        {
+          "id": 6,
+          "parent": 0,
+          "level": "medium",
+          "fitness": 0.622
+        },
+        {
+          "id": 14,
+          "parent": 0,
+          "level": "medium",
+          "fitness": 0.61
+        },
+        {
+          "id": 17,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.608
+        },
+        {
+          "id": 4,
+          "parent": 0,
+          "level": "large",
+          "fitness": 0.606
+        },
+        {
+          "id": 0,
+          "parent": null,
+          "level": "seed",
+          "fitness": 0.604
+        },
+        {
+          "id": 11,
+          "parent": 0,
+          "level": "large",
+          "fitness": 0.602
+        },
+        {
+          "id": 22,
+          "parent": 0,
+          "level": "medium",
+          "fitness": 0.602
+        },
+        {
+          "id": 13,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.6
+        },
+        {
+          "id": 21,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.598
+        },
+        {
+          "id": 23,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.598
+        }
+      ],
+      "historical_best": 0.622,
+      "test_accuracy": 0.605,
+      "seconds": 181.8
+    },
+    {
+      "gen": 2,
+      "best_fitness": 0.628,
+      "mean_fitness": 0.6048666666666666,
+      "diversity": 7,
+      "top": [
+        {
+          "id": 0,
+          "parent": null,
+          "level": "seed",
+          "fitness": 0.628
+        },
+        {
+          "id": 36,
+          "parent": 4,
+          "level": "large",
+          "fitness": 0.624
+        },
+        {
+          "id": 46,
+          "parent": 21,
+          "level": "small",
+          "fitness": 0.622
+        },
+        {
+          "id": 47,
+          "parent": 21,
+          "level": "medium",
+          "fitness": 0.62
+        },
+        {
+          "id": 22,
+          "parent": 0,
+          "level": "medium",
+          "fitness": 0.618
+        },
+        {
+          "id": 30,
+          "parent": 6,
+          "level": "large",
+          "fitness": 0.618
+        },
+        {
+          "id": 17,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.616
+        },
+        {
+          "id": 33,
+          "parent": 14,
+          "level": "large",
+          "fitness": 0.616
+        },
+        {
+          "id": 43,
+          "parent": 22,
+          "level": "medium",
+          "fitness": 0.614
+        },
+        {
+          "id": 34,
+          "parent": 17,
+          "level": "medium",
+          "fitness": 0.612
+        }
+      ],
+      "historical_best": 0.628,
+      "test_accuracy": 0.609,
+      "seconds": 137.5
+    },
+    {
+      "gen": 3,
+      "best_fitness": 0.652,
+      "mean_fitness": 0.6323333333333333,
+      "diversity": 6,
+      "top": [
+        {
+          "id": 57,
+          "parent": 47,
+          "level": "small",
+          "fitness": 0.652
+        },
+        {
+          "id": 62,
+          "parent": 17,
+          "level": "small",
+          "fitness": 0.65
+        },
+        {
+          "id": 34,
+          "parent": 17,
+          "level": "medium",
+          "fitness": 0.648
+        },
+        {
+          "id": 54,
+          "parent": 46,
+          "level": "small",
+          "fitness": 0.648
+        },
+        {
+          "id": 69,
+          "parent": 34,
+          "level": "medium",
+          "fitness": 0.648
+        },
+        {
+          "id": 65,
+          "parent": 33,
+          "level": "small",
+          "fitness": 0.646
+        },
+        {
+          "id": 68,
+          "parent": 34,
+          "level": "medium",
+          "fitness": 0.646
+        },
+        {
+          "id": 50,
+          "parent": 0,
+          "level": "large",
+          "fitness": 0.644
+        },
+        {
+          "id": 0,
+          "parent": null,
+          "level": "seed",
+          "fitness": 0.642
+        },
+        {
+          "id": 56,
+          "parent": 47,
+          "level": "small",
+          "fitness": 0.64
+        }
+      ],
+      "historical_best": 0.652,
+      "test_accuracy": 0.612,
+      "seconds": 137.7
+    },
+    {
+      "gen": 4,
+      "best_fitness": 0.588,
+      "mean_fitness": 0.5624,
+      "diversity": 7,
+      "top": [
+        {
+          "id": 65,
+          "parent": 33,
+          "level": "small",
+          "fitness": 0.588
+        },
+        {
+          "id": 57,
+          "parent": 47,
+          "level": "small",
+          "fitness": 0.584
+        },
+        {
+          "id": 86,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.578
+        },
+        {
+          "id": 87,
+          "parent": 0,
+          "level": "medium",
+          "fitness": 0.578
+        },
+        {
+          "id": 73,
+          "parent": 62,
+          "level": "medium",
+          "fitness": 0.576
+        },
+        {
+          "id": 80,
+          "parent": 65,
+          "level": "medium",
+          "fitness": 0.576
+        },
+        {
+          "id": 74,
+          "parent": 34,
+          "level": "medium",
+          "fitness": 0.572
+        },
+        {
+          "id": 50,
+          "parent": 0,
+          "level": "large",
+          "fitness": 0.57
+        },
+        {
+          "id": 75,
+          "parent": 34,
+          "level": "large",
+          "fitness": 0.57
+        },
+        {
+          "id": 83,
+          "parent": 68,
+          "level": "medium",
+          "fitness": 0.57
+        }
+      ],
+      "historical_best": 0.652,
+      "test_accuracy": 0.612,
+      "seconds": 140.2
+    },
+    {
+      "gen": 5,
+      "best_fitness": 0.622,
+      "mean_fitness": 0.608,
+      "diversity": 10,
+      "top": [
+        {
+          "id": 73,
+          "parent": 62,
+          "level": "medium",
+          "fitness": 0.622
+        },
+        {
+          "id": 80,
+          "parent": 65,
+          "level": "medium",
+          "fitness": 0.62
+        },
+        {
+          "id": 98,
+          "parent": 73,
+          "level": "small",
+          "fitness": 0.62
+        },
+        {
+          "id": 74,
+          "parent": 34,
+          "level": "medium",
+          "fitness": 0.618
+        },
+        {
+          "id": 93,
+          "parent": 57,
+          "level": "small",
+          "fitness": 0.616
+        },
+        {
+          "id": 97,
+          "parent": 87,
+          "level": "large",
+          "fitness": 0.616
+        },
+        {
+          "id": 86,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.614
+        },
+        {
+          "id": 94,
+          "parent": 86,
+          "level": "large",
+          "fitness": 0.614
+        },
+        {
+          "id": 100,
+          "parent": 80,
+          "level": "small",
+          "fitness": 0.614
+        },
+        {
+          "id": 103,
+          "parent": 74,
+          "level": "medium",
+          "fitness": 0.614
+        }
+      ],
+      "historical_best": 0.652,
+      "test_accuracy": 0.612,
+      "seconds": 139.0
+    },
+    {
+      "gen": 6,
+      "best_fitness": 0.662,
+      "mean_fitness": 0.6256666666666665,
+      "diversity": 8,
+      "top": [
+        {
+          "id": 118,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.662
+        },
+        {
+          "id": 93,
+          "parent": 57,
+          "level": "small",
+          "fitness": 0.656
+        },
+        {
+          "id": 117,
+          "parent": 74,
+          "level": "small",
+          "fitness": 0.646
+        },
+        {
+          "id": 73,
+          "parent": 62,
+          "level": "medium",
+          "fitness": 0.644
+        },
+        {
+          "id": 74,
+          "parent": 34,
+          "level": "medium",
+          "fitness": 0.644
+        },
+        {
+          "id": 114,
+          "parent": 98,
+          "level": "small",
+          "fitness": 0.644
+        },
+        {
+          "id": 115,
+          "parent": 98,
+          "level": "medium",
+          "fitness": 0.644
+        },
+        {
+          "id": 86,
+          "parent": 0,
+          "level": "small",
+          "fitness": 0.64
+        },
+        {
+          "id": 103,
+          "parent": 74,
+          "level": "medium",
+          "fitness": 0.638
+        },
+        {
+          "id": 98,
+          "parent": 73,
+          "level": "small",
+          "fitness": 0.636
+        }
+      ],
+      "historical_best": 0.662,
+      "test_accuracy": 0.616,
+      "seconds": 161.2
+    },
+    {
+      "gen": 7,
+      "best_fitness": 0.644,
+      "mean_fitness": 0.6153999999999998,
+      "diversity": 6,
+      "top": [
+        {
+          "id": 103,
+          "parent": 74,
+          "level": "medium",
+          "fitness": 0.644
+        },
+        {
+          "id": 146,
+          "parent": 103,
+          "level": "small",
+          "fitness": 0.638
+        },
+        {
+          "id": 117,
+          "parent": 74,
+          "level": "small",
+          "fitness": 0.63
+        },
+        {
+          "id": 133,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.626
+        },
+        {
+          "id": 74,
+          "parent": 34,
+          "level": "medium",
+          "fitness": 0.624
+        },
+        {
+          "id": 132,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.624
+        },
+        {
+          "id": 134,
+          "parent": 117,
+          "level": "small",
+          "fitness": 0.624
+        },
+        {
+          "id": 135,
+          "parent": 117,
+          "level": "small",
+          "fitness": 0.624
+        },
+        {
+          "id": 118,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.622
+        },
+        {
+          "id": 130,
+          "parent": 118,
+          "level": "large",
+          "fitness": 0.622
+        }
+      ],
+      "historical_best": 0.662,
+      "test_accuracy": 0.616,
+      "seconds": 223.3
+    },
+    {
+      "gen": 8,
+      "best_fitness": 0.626,
+      "mean_fitness": 0.6009333333333332,
+      "diversity": 8,
+      "top": [
+        {
+          "id": 132,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.626
+        },
+        {
+          "id": 133,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.622
+        },
+        {
+          "id": 162,
+          "parent": 134,
+          "level": "large",
+          "fitness": 0.62
+        },
+        {
+          "id": 156,
+          "parent": 133,
+          "level": "medium",
+          "fitness": 0.616
+        },
+        {
+          "id": 160,
+          "parent": 132,
+          "level": "medium",
+          "fitness": 0.616
+        },
+        {
+          "id": 118,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.614
+        },
+        {
+          "id": 135,
+          "parent": 117,
+          "level": "small",
+          "fitness": 0.61
+        },
+        {
+          "id": 117,
+          "parent": 74,
+          "level": "small",
+          "fitness": 0.608
+        },
+        {
+          "id": 166,
+          "parent": 118,
+          "level": "small",
+          "fitness": 0.608
+        },
+        {
+          "id": 146,
+          "parent": 103,
+          "level": "small",
+          "fitness": 0.606
+        }
+      ],
+      "historical_best": 0.662,
+      "test_accuracy": 0.616,
+      "seconds": 222.6
+    },
+    {
+      "gen": 9,
+      "best_fitness": 0.658,
+      "mean_fitness": 0.6259999999999999,
+      "diversity": 6,
+      "top": [
+        {
+          "id": 186,
+          "parent": 166,
+          "level": "small",
+          "fitness": 0.658
+        },
+        {
+          "id": 118,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.654
+        },
+        {
+          "id": 166,
+          "parent": 118,
+          "level": "small",
+          "fitness": 0.654
+        },
+        {
+          "id": 180,
+          "parent": 118,
+          "level": "small",
+          "fitness": 0.654
+        },
+        {
+          "id": 187,
+          "parent": 166,
+          "level": "small",
+          "fitness": 0.648
+        },
+        {
+          "id": 133,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.642
+        },
+        {
+          "id": 176,
+          "parent": 156,
+          "level": "small",
+          "fitness": 0.642
+        },
+        {
+          "id": 156,
+          "parent": 133,
+          "level": "medium",
+          "fitness": 0.636
+        },
+        {
+          "id": 179,
+          "parent": 160,
+          "level": "small",
+          "fitness": 0.636
+        },
+        {
+          "id": 132,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.634
+        }
+      ],
+      "historical_best": 0.662,
+      "test_accuracy": 0.616,
+      "seconds": 228.6
+    },
+    {
+      "gen": 10,
+      "best_fitness": 0.664,
+      "mean_fitness": 0.6434000000000001,
+      "diversity": 6,
+      "top": [
+        {
+          "id": 197,
+          "parent": 180,
+          "level": "medium",
+          "fitness": 0.664
+        },
+        {
+          "id": 198,
+          "parent": 187,
+          "level": "medium",
+          "fitness": 0.654
+        },
+        {
+          "id": 206,
+          "parent": 179,
+          "level": "small",
+          "fitness": 0.654
+        },
+        {
+          "id": 187,
+          "parent": 166,
+          "level": "small",
+          "fitness": 0.65
+        },
+        {
+          "id": 133,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.65
+        },
+        {
+          "id": 179,
+          "parent": 160,
+          "level": "small",
+          "fitness": 0.65
+        },
+        {
+          "id": 194,
+          "parent": 166,
+          "level": "small",
+          "fitness": 0.65
+        },
+        {
+          "id": 207,
+          "parent": 179,
+          "level": "large",
+          "fitness": 0.65
+        },
+        {
+          "id": 186,
+          "parent": 166,
+          "level": "small",
+          "fitness": 0.648
+        },
+        {
+          "id": 118,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.648
+        }
+      ],
+      "historical_best": 0.664,
+      "test_accuracy": 0.6155,
+      "seconds": 218.6
+    },
+    {
+      "gen": 11,
+      "best_fitness": 0.64,
+      "mean_fitness": 0.6241333333333333,
+      "diversity": 6,
+      "top": [
+        {
+          "id": 194,
+          "parent": 166,
+          "level": "small",
+          "fitness": 0.64
+        },
+        {
+          "id": 212,
+          "parent": 198,
+          "level": "small",
+          "fitness": 0.638
+        },
+        {
+          "id": 220,
+          "parent": 179,
+          "level": "small",
+          "fitness": 0.634
+        },
+        {
+          "id": 224,
+          "parent": 207,
+          "level": "small",
+          "fitness": 0.634
+        },
+        {
+          "id": 206,
+          "parent": 179,
+          "level": "small",
+          "fitness": 0.632
+        },
+        {
+          "id": 133,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.632
+        },
+        {
+          "id": 186,
+          "parent": 166,
+          "level": "small",
+          "fitness": 0.632
+        },
+        {
+          "id": 118,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.632
+        },
+        {
+          "id": 216,
+          "parent": 187,
+          "level": "small",
+          "fitness": 0.632
+        },
+        {
+          "id": 217,
+          "parent": 187,
+          "level": "small",
+          "fitness": 0.632
+        }
+      ],
+      "historical_best": 0.664,
+      "test_accuracy": 0.6155,
+      "seconds": 184.2
+    },
+    {
+      "gen": 12,
+      "best_fitness": 0.638,
+      "mean_fitness": 0.6139333333333333,
+      "diversity": 9,
+      "top": [
+        {
+          "id": 235,
+          "parent": 220,
+          "level": "medium",
+          "fitness": 0.638
+        },
+        {
+          "id": 220,
+          "parent": 179,
+          "level": "small",
+          "fitness": 0.632
+        },
+        {
+          "id": 239,
+          "parent": 206,
+          "level": "small",
+          "fitness": 0.628
+        },
+        {
+          "id": 206,
+          "parent": 179,
+          "level": "small",
+          "fitness": 0.626
+        },
+        {
+          "id": 233,
+          "parent": 212,
+          "level": "small",
+          "fitness": 0.626
+        },
+        {
+          "id": 212,
+          "parent": 198,
+          "level": "small",
+          "fitness": 0.622
+        },
+        {
+          "id": 249,
+          "parent": 217,
+          "level": "small",
+          "fitness": 0.622
+        },
+        {
+          "id": 194,
+          "parent": 166,
+          "level": "small",
+          "fitness": 0.62
+        },
+        {
+          "id": 224,
+          "parent": 207,
+          "level": "small",
+          "fitness": 0.618
+        },
+        {
+          "id": 133,
+          "parent": 93,
+          "level": "small",
+          "fitness": 0.618
+        }
+      ],
+      "historical_best": 0.664,
+      "test_accuracy": 0.6155,
+      "seconds": 186.8
+    },
+    {
+      "gen": 13,
+      "best_fitness": 0.628,
+      "mean_fitness": 0.6134,
+      "diversity": 8,
+      "top": [
+        {
+          "id": 212,
+          "parent": 198,
+          "level": "small",
+          "fitness": 0.628
+        },
+        {
+          "id": 269,
+          "parent": 133,
+          "level": "medium",
+          "fitness": 0.628
+        },
+        {
+          "id": 255,
+          "parent": 239,
+          "level": "small",
+          "fitness": 0.626
+        },
+        {
+          "id": 268,
+          "parent": 133,
+          "level": "medium",
+          "fitness": 0.626
+        },
+        {
+          "id": 262,
+          "parent": 249,
+          "level": "small",
+          "fitness": 0.624
+        },
+        {
+          "id": 206,
+          "parent": 179,
+          "level": "small",
+          "fitness": 0.622
+        },
+        {
+          "id": 249,
+          "parent": 217,
+          "level": "small",
+          "fitness": 0.622
+        },
+        {
+          "id": 259,
+          "parent": 233,
+          "level": "small",
+          "fitness": 0.622
+        },
+        {
+          "id": 260,
+          "parent": 212,
+          "level": "small",
+          "fitness": 0.622
+        },
+        {
+          "id": 233,
+          "parent": 212,
+          "level": "small",
+          "fitness": 0.62
+        }
+      ],
+      "historical_best": 0.664,
+      "test_accuracy": 0.6155,
+      "seconds": 183.8
+    },
+    {
+      "gen": 14,
+      "best_fitness": 0.654,
+      "mean_fitness": 0.6289333333333335,
+      "diversity": 8,
+      "top": [
+        {
+          "id": 288,
+          "parent": 233,
+          "level": "medium",
+          "fitness": 0.654
+        },
+        {
+          "id": 285,
+          "parent": 259,
+          "level": "small",
+          "fitness": 0.65
+        },
+        {
+          "id": 272,
+          "parent": 269,
+          "level": "medium",
+          "fitness": 0.648
+        },
+        {
+          "id": 233,
+          "parent": 212,
+          "level": "small",
+          "fitness": 0.644
+        },
+        {
+          "id": 279,
+          "parent": 262,
+          "level": "medium",
+          "fitness": 0.642
+        },
+        {
+          "id": 212,
+          "parent": 198,
+          "level": "small",
+          "fitness": 0.64
+        },
+        {
+          "id": 268,
+          "parent": 133,
+          "level": "medium",
+          "fitness": 0.64
+        },
+        {
+          "id": 287,
+          "parent": 260,
+          "level": "small",
+          "fitness": 0.64
+        },
+        {
+          "id": 259,
+          "parent": 233,
+          "level": "small",
+          "fitness": 0.638
+        },
+        {
+          "id": 269,
+          "parent": 133,
+          "level": "medium",
+          "fitness": 0.634
+        }
+      ],
+      "historical_best": 0.664,
+      "test_accuracy": 0.6155,
+      "seconds": 185.2
+    },
+    {
+      "gen": 15,
+      "best_fitness": 0.662,
+      "mean_fitness": 0.6299333333333333,
+      "diversity": 9,
+      "top": [
+        {
+          "id": 279,
+          "parent": 262,
+          "level": "medium",
+          "fitness": 0.662
+        },
+        {
+          "id": 299,
+          "parent": 279,
+          "level": "small",
+          "fitness": 0.65
+        },
+        {
+          "id": 272,
+          "parent": 269,
+          "level": "medium",
+          "fitness": 0.648
+        },
+        {
+          "id": 293,
+          "parent": 285,
+          "level": "small",
+          "fitness": 0.648
+        },
+        {
+          "id": 295,
+          "parent": 272,
+          "level": "small",
+          "fitness": 0.648
+        },
+        {
+          "id": 285,
+          "parent": 259,
+          "level": "small",
+          "fitness": 0.644
+        },
+        {
+          "id": 304,
+          "parent": 287,
+          "level": "small",
+          "fitness": 0.642
+        },
+        {
+          "id": 212,
+          "parent": 198,
+          "level": "small",
+          "fitness": 0.638
+        },
+        {
+          "id": 307,
+          "parent": 259,
+          "level": "small",
+          "fitness": 0.638
+        },
+        {
+          "id": 288,
+          "parent": 233,
+          "level": "medium",
+          "fitness": 0.636
+        }
+      ],
+      "historical_best": 0.664,
+      "test_accuracy": 0.6155,
+      "seconds": 183.4
+    },
+    {
+      "gen": 16,
+      "best_fitness": 0.64,
+      "mean_fitness": 0.6198000000000001,
+      "diversity": 9,
+      "top": [
+        {
+          "id": 279,
+          "parent": 262,
+          "level": "medium",
+          "fitness": 0.64
+        },
+        {
+          "id": 299,
+          "parent": 279,
+          "level": "small",
+          "fitness": 0.64
+        },
+        {
+          "id": 329,
+          "parent": 288,
+          "level": "small",
+          "fitness": 0.638
+        },
+        {
+          "id": 317,
+          "parent": 293,
+          "level": "small",
+          "fitness": 0.634
+        },
+        {
+          "id": 328,
+          "parent": 288,
+          "level": "small",
+          "fitness": 0.634
+        },
+        {
+          "id": 312,
+          "parent": 299,
+          "level": "small",
+          "fitness": 0.632
+        },
+        {
+          "id": 288,
+          "parent": 233,
+          "level": "medium",
+          "fitness": 0.628
+        },
+        {
+          "id": 319,
+          "parent": 295,
+          "level": "medium",
+          "fitness": 0.628
+        },
+        {
+          "id": 272,
+          "parent": 269,
+          "level": "medium",
+          "fitness": 0.626
+        },
+        {
+          "id": 321,
+          "parent": 285,
+          "level": "small",
+          "fitness": 0.626
+        }
+      ],
+      "historical_best": 0.664,
+      "test_accuracy": 0.6155,
+      "seconds": 214.1
+    },
+    {
+      "gen": 17,
+      "best_fitness": 0.64,
+      "mean_fitness": 0.6157333333333332,
+      "diversity": 6,
+      "top": [
+        {
+          "id": 288,
+          "parent": 233,
+          "level": "medium",
+          "fitness": 0.64
+        },
+        {
+          "id": 331,
+          "parent": 279,
+          "level": "large",
+          "fitness": 0.638
+        },
+        {
+          "id": 334,
+          "parent": 329,
+          "level": "small",
+          "fitness": 0.63
+        },
+        {
+          "id": 342,
+          "parent": 288,
+          "level": "small",
+          "fitness": 0.63
+        },
+        {
+          "id": 343,
+          "parent": 288,
+          "level": "small",
+          "fitness": 0.63
+        },
+        {
+          "id": 329,
+          "parent": 288,
+          "level": "small",
+          "fitness": 0.628
+        },
+        {
+          "id": 317,
+          "parent": 293,
+          "level": "small",
+          "fitness": 0.628
+        },
+        {
+          "id": 335,
+          "parent": 329,
+          "level": "medium",
+          "fitness": 0.624
+        },
+        {
+          "id": 337,
+          "parent": 317,
+          "level": "small",
+          "fitness": 0.622
+        },
+        {
+          "id": 328,
+          "parent": 288,
+          "level": "small",
+          "fitness": 0.62
+        }
+      ],
+      "historical_best": 0.664,
+      "test_accuracy": 0.6155,
+      "seconds": 229.3
+    },
+    {
+      "gen": 18,
+      "best_fitness": 0.638,
+      "mean_fitness": 0.6183333333333334,
+      "diversity": 7,
+      "top": [
+        {
+          "id": 335,
+          "parent": 329,
+          "level": "medium",
+          "fitness": 0.638
+        },
+        {
+          "id": 360,
+          "parent": 329,
+          "level": "medium",
+          "fitness": 0.634
+        },
+        {
+          "id": 369,
+          "parent": 328,
+          "level": "medium",
+          "fitness": 0.634
+        },
+        {
+          "id": 342,
+          "parent": 288,
+          "level": "small",
+          "fitness": 0.63
+        },
+        {
+          "id": 288,
+          "parent": 233,
+          "level": "medium",
+          "fitness": 0.628
+        },
+        {
+          "id": 359,
+          "parent": 343,
+          "level": "small",
+          "fitness": 0.628
+        },
+        {
+          "id": 366,
+          "parent": 337,
+          "level": "small",
+          "fitness": 0.628
+        },
+        {
+          "id": 329,
+          "parent": 288,
+          "level": "small",
+          "fitness": 0.626
+        },
+        {
+          "id": 361,
+          "parent": 329,
+          "level": "small",
+          "fitness": 0.626
+        },
+        {
+          "id": 354,
+          "parent": 334,
+          "level": "small",
+          "fitness": 0.624
+        }
+      ],
+      "historical_best": 0.664,
+      "test_accuracy": 0.6155,
+      "seconds": 220.5
+    }
+  ],
+  "best_test_fitness": 0.616,
+  "best_test_gen": 6,
+  "best_test_id": 118
+}

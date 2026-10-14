@@ -1,0 +1,31 @@
+{
+  "init": "trainPuzzles/my_model.pth",
+  "out": "trainPuzzles/checkpoints/puzzle_net.pth",
+  "report": "trainPuzzles/checkpoints/puzzle_net_report.json",
+  "levels_requested": 1,
+  "max_level": 0,
+  "threshold": 0.95,
+  "retention_threshold": 0.95,
+  "patience": 2,
+  "min_epochs": 15,
+  "big": 0.2,
+  "small": 0.05,
+  "levels": [
+    {
+      "level": 1,
+      "baseline": 0.5933333333333334,
+      "final": 0.6466666666666666,
+      "delta": 0.05333333333333323,
+      "epochs": 261,
+      "mastered": false,
+      "reached": true,
+      "best": 0.6466666666666666,
+      "best_epoch": 187,
+      "verdict": "mejoró poco"
+    }
+  ],
+  "avg_delta": 0.05333333333333323,
+  "verdict": "mejoró poco",
+  "levels_reached": 1,
+  "levels_mastered": 0
+}
