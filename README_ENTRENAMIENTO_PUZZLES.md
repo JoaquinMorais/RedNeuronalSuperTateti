@@ -170,6 +170,21 @@ Parámetros por variable de entorno: `TARGET_LEVEL` (2), `ROUNDS` (5), `PPL` (25
 `PPL_STEP` (25000), `MAX_EPOCHS` (3000), `PLATEAU` (1500), `SEED` (0), `EVAL_SEED` (0),
 `DROPOUT` (0.2), `WEIGHT_DECAY` (1e-4), `WARM_START` (1), `THRESHOLD` (0.90), `MAX_LEVEL` (3).
 
+**Desde Windows (Docker Desktop + WSL):** usá la variante `retrain_loop_windows.sh`, que se
+ubica sola en la raíz del repo y verifica Docker/Python. Parado en la raíz del repo:
+
+```powershell
+wsl bash trainPuzzles/retrain_loop_windows.sh
+# con parámetros:
+wsl bash -c "ROUNDS=2 bash trainPuzzles/retrain_loop_windows.sh"
+# guardando el log:
+wsl bash -c "ROUNDS=2 bash trainPuzzles/retrain_loop_windows.sh" > retrain.log 2>&1
+```
+
+> Debe tener finales de línea **LF**. El `.gitattributes` del repo lo garantiza en un clon
+> nuevo; si al correrlo ves `$'\r': command not found`, ejecutá
+> `sed -i 's/\r$//' trainPuzzles/retrain_loop_windows.sh`.
+
 ### 4.6 Ver el log y frenar
 
 ```bash
