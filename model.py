@@ -2,6 +2,29 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+def _canonicalize(x: torch.Tensor) -> torch.Tensor:
+    """Reescribe el estado desde la perspectiva de quien mueve (mis fichas = +1).
+
+    ``x[:, 0:81]`` es el tablero ABSOLUTO (X=+1, O=-1) y ``x[:, 81:90]`` el resultado de cada
+    tablero chico (1 / -1 / 0 = empatado / 0.5 = en juego). ``x[:, 99]`` es ``turno/81``: mueve X
+    con turno par. Si mueve O, se multiplica tablero y tableros ganados por -1 para que la red vea
+    siempre "mis fichas = +1"; el 0.5 de "en juego" no se toca. Así un patrón táctico se aprende una
+    sola vez en vez de una por color.
+
+    No permuta índices (la jugada sigue siendo la misma casilla absoluta), por eso la máscara de
+    movimientos válidos sigue alineada. Ver ``trainPuzzles/canon.py``.
+    """
+    turn = torch.round(x[:, 99] * 81.0).to(torch.int64)
+    odd = (turn % 2).to(x.dtype).unsqueeze(1)     # 0.0 si mueve X, 1.0 si mueve O (mismo device)
+    me = 1.0 - 2.0 * odd
+    out = x.clone()
+    out[:, 0:81] = x[:, 0:81] * me
+    won = x[:, 81:90]
+    out[:, 81:90] = torch.where(won.abs() == 1.0, won * me, won)
+    return out
+
+
 class SuperTatetiNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -29,13 +52,17 @@ class SuperTatetiNet(nn.Module):
     
     def forward(self, x, valid_moves_mask=None):
         """
-        x:                tensor de forma (batch, 100)
+        x:                tensor de forma (batch, 100) (estado crudo de ``game.get_state()``)
         valid_moves_mask: tensor de forma (batch, 81) con 1=válido, 0=inválido
         
+        La entrada se canonicaliza (perspectiva de quien mueve) antes de la red: el encoding
+        canónico vive acá y por eso todos los que juegan pasan el estado crudo sin transformarlo.
+
         Retorna:
           policy: probabilidades de cada movimiento (batch, 81)
           value:  evaluación de la posición       (batch, 1)
         """
+        x = _canonicalize(x)
         shared = self.shared(x)
         
         # Rama de valor

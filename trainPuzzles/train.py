@@ -138,7 +138,11 @@ def clone_state(net: SuperTatetiNet) -> dict:
 # ----------------------------------------------------------------------
 class PuzzleTrainer:
     """Entrena con entrada CANÓNICA (perspectiva de quien mueve) y, por defecto, con una simetría D4
-    al azar por muestra en cada epoch (``augment``). Ver ``canon.py``."""
+    al azar por muestra en cada epoch (``augment``). Ver ``canon.py``.
+
+    La perspectiva canónica la aplica ``SuperTatetiNet.forward`` (``model.py``), así que acá se le
+    pasa el estado CRUDO (``game.get_state()``); ``augment`` (D4) sí se aplica sobre el lote.
+    """
 
     def __init__(self, net: SuperTatetiNet, lr: float = 3e-4, value_coef: float = 0.0,
                  seed: int = 0, augment: bool = True):
@@ -158,7 +162,7 @@ class PuzzleTrainer:
         losses = []
         for i in range(0, len(order), batch_size):
             idxs = order[i:i + batch_size]
-            states_np = canon.canonical_batch(np.stack([puzzles[j].state for j in idxs]))
+            states_np = np.stack([puzzles[j].state for j in idxs])
             masks_np = np.stack([puzzles[j].mask for j in idxs])
             targets_np = np.stack([policy_target(puzzles[j].best_moves) for j in idxs])
             if self.augment:
@@ -189,7 +193,7 @@ def accuracy(net: SuperTatetiNet, puzzles: list[Puzzle]) -> float:
     correct = 0
     for i in range(0, len(puzzles), 1024):                      # por lotes: mucho más rápido que uno a uno
         chunk = puzzles[i:i + 1024]
-        states = torch.from_numpy(canon.canonical_batch(np.stack([p.state for p in chunk])))
+        states = torch.from_numpy(np.stack([p.state for p in chunk]))
         masks = torch.from_numpy(np.stack([p.mask for p in chunk]))
         policy, _ = net(states, masks)
         moves = torch.argmax(policy.masked_fill(masks == 0, -1.0), dim=-1).tolist()

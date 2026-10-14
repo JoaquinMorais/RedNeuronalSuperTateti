@@ -18,8 +18,10 @@ Dos arreglos, ambos acá:
 El quién-mueve se toma de la paridad del turno (``state[99] * 81``): mueve X con turno par.
 En posiciones reales coincide con la suma de las fichas (#X - #O = turno % 2).
 
-COMPATIBILIDAD: una red entrenada así espera esta entrada. Para jugar con ella hay que pasar
-``canonical_state(game.get_state())`` en lugar de ``game.get_state()``.
+COMPATIBILIDAD: la perspectiva canónica la aplica ``SuperTatetiNet.forward`` (``model.py``), así que
+al jugar/entrenar se pasa el estado CRUDO (``game.get_state()``) y la red lo transforma sola. Acá
+``canonical_batch``/``canonical_state`` quedan como referencia y para tests; ``augment`` (D4) sigue
+usándose en el entrenamiento de puzzles.
 """
 from __future__ import annotations
 

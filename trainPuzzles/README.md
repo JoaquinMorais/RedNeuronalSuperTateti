@@ -129,11 +129,12 @@ solo ~62 % en puzzles nuevos. Por eso `canon.py` hace dos cosas:
 En la prueba controlada, con 6.000 puzzles: 62 % -> 72 % (perspectiva) -> 84 %
 (+ simetrías); con 24.000 puzzles y simetrías, ~93 % en 10 epochs.
 
-> **Compatibilidad:** una red entrenada con `trainPuzzles` espera la entrada canónica.
-> Para jugar con ella hay que pasar `canon.canonical_state(game.get_state())` en vez de
-> `game.get_state()`. Los `.pth` siguen siendo `state_dict` planos de `SuperTatetiNet`,
-> pero **`evolution/engine.py` todavía no aplica esa transformación**: usar uno de estos
-> modelos en la liga tal cual lo haría jugar mal. Los reportes JSON llevan
+> **Compatibilidad:** la perspectiva canónica la aplica ahora `SuperTatetiNet.forward`
+> (`model.py`), así que al jugar o entrenar se pasa el estado CRUDO (`game.get_state()`)
+> y la red lo transforma sola. Por eso **todos** los que juegan (liga `evolution/engine.py`,
+> `play.py`, `mcts.py`) funcionan sin cambios. Los `.pth` siguen siendo `state_dict` planos
+> de `SuperTatetiNet`, pero un modelo entrenado con `trainPuzzles` espera esa transformación:
+> usarlo con un `forward` viejo (sin el canónico) lo haría jugar mal. Los reportes JSON llevan
 > `"input_encoding": "canonical"`.
 
 ## Cómo saber si está aprendiendo

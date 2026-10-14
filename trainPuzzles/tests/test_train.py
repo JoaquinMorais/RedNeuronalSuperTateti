@@ -5,7 +5,6 @@ import torch
 
 from evolution import modelstore
 from model import SuperTatetiNet
-from trainPuzzles import canon
 from trainPuzzles import puzzles as P
 from trainPuzzles import train as T
 from trainPuzzles.puzzles import make_puzzle
@@ -182,7 +181,7 @@ def test_accuracy_por_lotes_coincide_con_una_a_una_y_usa_entrada_canonica():
     net = SuperTatetiNet().eval()
     hits = 0
     for p in ps:
-        s = torch.from_numpy(canon.canonical_state(p.state)).unsqueeze(0)
+        s = torch.from_numpy(p.state).unsqueeze(0)          # estado crudo: forward canonicaliza
         m = torch.from_numpy(p.mask).unsqueeze(0)
         with torch.no_grad():
             pol, _ = net(s, m)
