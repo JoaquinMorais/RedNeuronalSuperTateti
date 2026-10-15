@@ -1,12 +1,14 @@
 {
   "input_encoding": "canonical",
-  "init": "none.pth",
+  "init": "trainPuzzles/checkpoints/puzzle_canon.pth",
   "out": "trainPuzzles/checkpoints/puzzle_canon.pth",
   "report": "trainPuzzles/checkpoints/puzzle_canon_report.json",
+  "run_dir": "trainPuzzles/checkpoints/runs/0005_retry1",
+  "run_name": "retry1",
   "levels_requested": 1,
-  "max_level": 0,
-  "threshold": 0.95,
-  "retention_threshold": 0.95,
+  "max_level": 3,
+  "threshold": 0.9,
+  "retention_threshold": 0.9,
   "patience": 2,
   "min_epochs": 15,
   "big": 0.2,
@@ -14,19 +16,23 @@
   "levels": [
     {
       "level": 1,
-      "baseline": 0.56,
-      "final": 0.931,
-      "delta": 0.371,
-      "epochs": 14029,
-      "mastered": false,
+      "baseline": 0.996,
+      "final": 0.999,
+      "delta": 0.0030000000000000027,
+      "epochs": 18,
+      "mastered": true,
       "reached": true,
-      "best": 0.931,
-      "best_epoch": 12372,
-      "verdict": "mejoró mucho"
+      "best": 0.999,
+      "best_epoch": 2,
+      "best_top2": 1.0,
+      "best_top3": 1.0,
+      "final_top2": 1.0,
+      "final_top3": 1.0,
+      "verdict": "no muestra un aprendizaje claro"
     }
   ],
-  "avg_delta": 0.371,
-  "verdict": "mejoró mucho",
+  "avg_delta": 0.0030000000000000027,
+  "verdict": "no muestra un aprendizaje claro",
   "levels_reached": 1,
-  "levels_mastered": 0
+  "levels_mastered": 1
 }

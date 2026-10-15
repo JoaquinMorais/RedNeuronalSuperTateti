@@ -1,0 +1,38 @@
+{
+  "input_encoding": "canonical",
+  "init": "trainPuzzles/checkpoints/puzzle_canon.pth",
+  "out": "trainPuzzles/checkpoints/puzzle_canon.pth",
+  "report": "trainPuzzles/checkpoints/puzzle_canon_report.json",
+  "run_dir": "trainPuzzles/checkpoints/runs/0003_retry2",
+  "run_name": "retry2",
+  "levels_requested": 1,
+  "max_level": 3,
+  "threshold": 0.9,
+  "retention_threshold": 0.9,
+  "patience": 2,
+  "min_epochs": 15,
+  "big": 0.2,
+  "small": 0.05,
+  "levels": [
+    {
+      "level": 1,
+      "baseline": 1.0,
+      "final": 1.0,
+      "delta": 0.0,
+      "epochs": 2432,
+      "mastered": false,
+      "reached": true,
+      "best": 1.0,
+      "best_epoch": 1,
+      "best_top2": 0.0,
+      "best_top3": 0.0,
+      "final_top2": 1.0,
+      "final_top3": 1.0,
+      "verdict": "no muestra un aprendizaje claro"
+    }
+  ],
+  "avg_delta": 0.0,
+  "verdict": "no muestra un aprendizaje claro",
+  "levels_reached": 1,
+  "levels_mastered": 0
+}

@@ -32,6 +32,7 @@ import torch
 
 from model import SuperTatetiNet
 
+from . import layout
 from . import train as T
 from .evo_config import EvoConfig, load_config, policy_tuple, save_config, validate
 from .puzzles import Puzzle, harvest
@@ -297,9 +298,10 @@ def next_generation(ranked: list[Individual], cfg: EvoConfig, gen: int,
 # Reporte
 # ----------------------------------------------------------------------
 def build_report(cfg: EvoConfig, best: dict, history: list[dict], test_accs: dict,
-                 best_test: dict | None = None) -> dict:
+                 best_test: dict | None = None, run_dir: Path | None = None) -> dict:
     report = {
         "config": cfg.snapshot(),
+        "run_dir": None if run_dir is None else str(run_dir),
         "best_fitness": best["fitness"],
         "best_gen": best["gen"],
         "best_id": best["id"],
@@ -354,15 +356,43 @@ def run(cfg: EvoConfig) -> int:
     np.random.seed(cfg.seed)
 
     out = Path(cfg.out)
-    report_path = Path(cfg.report) if cfg.report else out.with_name(f"{out.stem}_report.json")
+    canon_pth, canon_report = layout.canon_paths(out)
+    run_dir = layout.next_run_dir(out, cfg.run_name)
+    run_pth, run_report, _ = layout.run_paths(run_dir, cfg.run_name)
+    no_canon = bool(getattr(cfg, "no_canon", False))
+    report_path = Path(cfg.report) if cfg.report else canon_report
     rng = random.Random(cfg.seed)
 
     if not Path(cfg.seed_model).exists():
         raise FileNotFoundError(f"No existe el modelo semilla: {cfg.seed_model}")
     seed_sd = torch.load(cfg.seed_model, weights_only=True, map_location="cpu")
 
+    def save_best(sd: dict) -> None:
+        """Guarda el mejor histórico en `--out`, la corrida archivada y el canon.
+
+        Con `--no-canon` el canon no se pisa, aunque `--out` apunte a él.
+        """
+        net = _net_from(sd)
+        dests = [out, run_pth]
+        if no_canon:
+            dests = [d for d in dests if d != canon_pth]
+        else:
+            dests.append(canon_pth)
+        saved: list[Path] = []
+        for dest in dests:
+            if dest in saved:
+                continue
+            T.save_net(net, dest)
+            saved.append(dest)
+
+    def dump(report: dict, announce: bool = False) -> None:
+        """Escribe el reporte en el canon y en la carpeta de la corrida."""
+        write_report(report, report_path, announce=announce)
+        write_report(report, run_report, announce=False)
+
     T.log_phase("[INFO]", "Configuración evolutiva:")
-    T.log_phase("[INFO]", f"  semilla={cfg.seed_model}  out={out}  reporte={report_path}")
+    T.log_phase("[INFO]", f"  semilla={cfg.seed_model}  out={out}  corrida={run_dir}  "
+               f"canon={'off' if no_canon else canon_pth}  reporte={report_path}")
     T.log_phase("[INFO]", f"  población={cfg.population}  supervivientes={cfg.survivors}  "
                f"hijos={cfg.children}  generaciones={cfg.generations}")
     T.log_phase("[INFO]", f"  epochs/gen={cfg.epochs_per_gen}  lr={cfg.lr}  batch={cfg.batch_size}  "
@@ -415,7 +445,7 @@ def run(cfg: EvoConfig) -> int:
             ranked = sorted(pop, key=lambda x: x.fitness, reverse=True)
             row = _gen_row(gen, ranked, best)
             history.append(row)
-            write_report(build_report(cfg, best, history, test_accs, best_test), report_path)
+            dump(build_report(cfg, best, history, test_accs, best_test, run_dir=run_dir))
             break
 
         ranked = sorted(pop, key=lambda x: x.fitness, reverse=True)
@@ -424,7 +454,7 @@ def run(cfg: EvoConfig) -> int:
         if champ.fitness > best["fitness"]:
             best = {"fitness": champ.fitness, "gen": gen, "id": champ.id, "sd": champ.sd,
                     "lineage": _lineage(registry, champ)}
-            T.save_net(_net_from(champ.sd), out)
+            save_best(champ.sd)
 
         champ_test = None
         if gen % cfg.test_every == 0 and testset:
@@ -439,6 +469,7 @@ def run(cfg: EvoConfig) -> int:
                 best_test_seen = test_accs[gen]
                 best_test = {"fitness": test_accs[gen], "gen": gen, "id": best["id"],
                              "sd": best["sd"]}
+                T.save_net(_net_from(best_test["sd"]), run_dir / "best_test.pth")
                 if cfg.out_test is not None:
                     T.save_net(_net_from(best_test["sd"]), Path(cfg.out_test))
                 gens_since_test_improved = 0
@@ -450,7 +481,7 @@ def run(cfg: EvoConfig) -> int:
         row["champion_test_accuracy"] = champ_test
         row["seconds"] = round(time.time() - t0, 1)
         history.append(row)
-        write_report(build_report(cfg, best, history, test_accs, best_test), report_path)
+        dump(build_report(cfg, best, history, test_accs, best_test, run_dir=run_dir))
 
         T.log_phase("[EVO]", f"  gen {gen} | mejor {champ.fitness * 100:5.1f}% | "
                    f"histórico {best['fitness'] * 100:5.1f}% (gen {best['gen']}) | "
@@ -465,10 +496,10 @@ def run(cfg: EvoConfig) -> int:
         registry.update({p.id: p for p in pop})
 
     if best["sd"] is not None:
-        T.save_net(_net_from(best["sd"]), out)
-    report = build_report(cfg, best, history, test_accs, best_test)
+        save_best(best["sd"])
+    report = build_report(cfg, best, history, test_accs, best_test, run_dir=run_dir)
     print_summary(cfg, report)
-    write_report(report, report_path, announce=True)
+    dump(report, announce=True)
     if T._STOP.is_set():
         T.log_phase("[INFO]", "entrenamiento evolutivo detenido por el usuario. Reporte guardado.")
     return 0
@@ -516,6 +547,10 @@ def parse_args(argv: list[str] | None = None) -> EvoConfig:
     p.add_argument("--out", default=argparse.SUPPRESS)
     p.add_argument("--out-test", dest="out_test", default=argparse.SUPPRESS)
     p.add_argument("--report", default=argparse.SUPPRESS)
+    p.add_argument("--run-name", dest="run_name", default=argparse.SUPPRESS,
+                   help="etiqueta de la corrida archivada en checkpoints/runs/ (default: evo)")
+    p.add_argument("--no-canon", dest="no_canon", action="store_true", default=argparse.SUPPRESS,
+                   help="no copiar el mejor a puzzle_canon.pth (experimentos que no deben pisar la cadena)")
     p.add_argument("--population", type=int, default=argparse.SUPPRESS)
     p.add_argument("--survivors", type=int, default=argparse.SUPPRESS)
     p.add_argument("--generations", type=int, default=argparse.SUPPRESS)

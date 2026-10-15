@@ -1,10 +1,12 @@
 """Pruebas del entrenador por puzzles (torch, sin base de datos)."""
 import random
 
+import numpy as np
 import torch
 
 from evolution import modelstore
 from model import SuperTatetiNet
+from trainPuzzles import layout as L
 from trainPuzzles import puzzles as P
 from trainPuzzles import train as T
 from trainPuzzles.puzzles import make_puzzle
@@ -104,6 +106,29 @@ def test_build_report_sin_datos(tmp_path):
     assert report["avg_delta"] != report["avg_delta"]           # NaN
 
 
+def test_parse_args_acepta_start_level_y_stop_at_level():
+    args = T.parse_args(["--start-level", "2", "--stop-at-level", "2"])
+    assert args.start_level == 2
+    assert args.stop_at_level == 2
+    assert T.parse_args([]).start_level == 1
+    assert T.parse_args([]).stop_at_level == 0
+
+
+def test_scheduled_levels_normaliza_start_y_levels():
+    assert T.scheduled_levels(T.parse_args([])) == (1, 4)
+    assert T.scheduled_levels(T.parse_args(["--levels", "3"])) == (1, 3)
+    assert T.scheduled_levels(T.parse_args(["--start-level", "2"])) == (2, 4)
+    # --levels menor que start-level se eleva para no dejar afuera el nivel inicial
+    assert T.scheduled_levels(T.parse_args(["--start-level", "3", "--levels", "1"])) == (3, 3)
+
+
+def test_build_report_incluye_start_level(tmp_path):
+    args = T.parse_args(["--start-level", "2"])
+    report = T.build_report(args, tmp_path / "in.pth", tmp_path / "out.pth",
+                            tmp_path / "r.json", [], args.threshold)
+    assert report["start_level"] == 2
+
+
 def test_train_level_se_detiene_con_el_flag_de_parada():
     g = mate_in_1_position()
     p = make_puzzle(g, 1, [2 * 9 + 2])
@@ -130,6 +155,22 @@ def test_train_level_respeta_tope_de_epochs():
     assert res["capped"] is True
     assert res["epochs"] == 2
     assert res["mastered"] is False
+
+
+def test_train_level_domina_con_eval_every_mayor_a_uno():
+    # Regresión: con --eval-every > 1 la racha de dominio debe acumularse entre
+    # epochs evaluados y no reiniciarse en los no evaluados (antes nunca dominaba).
+    g = mate_in_1_position()
+    all_moves = tuple(int(m) for m in g.get_valid_moves().nonzero()[0])
+    p = make_puzzle(g, 1, all_moves)
+    net = SuperTatetiNet()
+    trainer = T.PuzzleTrainer(net, seed=0)
+    args = T.parse_args(["--max-epochs", "20", "--min-epochs", "1",
+                         "--patience", "2", "--eval-every", "2", "--threshold", "0.9"])
+    res = T.train_level(net, trainer, args, 1, [p, p], [p], [p], 0.0, 0.9)
+    assert res["mastered"] is True
+    assert res["capped"] is False
+    assert res["epochs"] <= 20
 
 
 def test_revision_phase_reporta_retencion_por_nivel():
@@ -254,3 +295,139 @@ def test_eval_seed_por_defecto_igual_a_seed():
     assert T._eval_seed(a) == 5
     b = T.parse_args(["--seed", "5", "--eval-seed", "99"])
     assert T._eval_seed(b) == 99
+
+
+# ---------------------- técnicas de refuerzo de entrenamiento ----------------------
+def _puzzles_mate1(n=4):
+    g = mate_in_1_position()
+    all_moves = tuple(int(m) for m in g.get_valid_moves().nonzero()[0])
+    return [make_puzzle(g, 1, all_moves) for _ in range(n)]
+
+
+def test_topk_accuracy_agrega_las_k():
+    ps = _puzzles_mate1(5)
+    torch.manual_seed(0)
+    net = SuperTatetiNet().eval()
+    tk = T.topk_accuracy(net, ps, ks=(1, 2, 3))
+    assert set(tk.keys()) == {1, 2, 3}
+    assert all(0.0 <= v <= 1.0 for v in tk.values())
+    assert tk[1] <= tk[2] <= tk[3]
+
+
+def test_accuracy_con_tta_corre():
+    ps = _puzzles_mate1(4)
+    torch.manual_seed(0)
+    net = SuperTatetiNet().eval()
+    a = T.accuracy(net, ps, tta=True)
+    assert 0.0 <= a <= 1.0
+    tk = T.topk_accuracy(net, ps, ks=(1, 2), tta=True)
+    assert all(0.0 <= v <= 1.0 for v in tk.values())
+
+
+def test_tta_mapea_la_politica_de_vuelta_con_IDX81():
+    from trainPuzzles import canon
+    o = 40
+    pol_old = np.zeros((1, 81), np.float32)
+    pol_old[0, o] = 1.0
+    states = np.zeros((1, 100), np.float32)
+    masks = np.ones((1, 81), np.float32)
+    for k in range(len(canon.SYM_MAPS)):
+        _, _, pol_new = canon.apply_sym(states, masks, pol_old, k)
+        p_back = np.zeros_like(pol_new)
+        p_back[:, canon.IDX81[k]] = pol_new
+        assert int(np.argmax(p_back[0])) == o
+
+
+def test_per_sample_correct_da_un_bool_por_puzzle():
+    ps = _puzzles_mate1(3)
+    torch.manual_seed(0)
+    net = SuperTatetiNet().eval()
+    c = T.per_sample_correct(net, ps)
+    assert c.shape == (len(ps),)
+    assert c.dtype == bool
+
+
+def test_compute_weights_solo_actua_fuera_del_warmup():
+    ps = _puzzles_mate1(4)
+    net = SuperTatetiNet().eval()
+    w_warm = T.compute_weights(net, ps, boost=3.0, warmup_epoch=5, current_epoch=2, mine_every=1)
+    assert all(v == 1.0 for v in w_warm)
+    w_on = T.compute_weights(net, ps, boost=3.0, warmup_epoch=0, current_epoch=1, mine_every=1)
+    assert all(v >= 1.0 for v in w_on)
+
+
+def test_ema_mantiene_la_misma_estructura_que_el_state_dict():
+    net = SuperTatetiNet()
+    trainer = T.PuzzleTrainer(net, lr=1e-3, seed=0, ema_decay=0.9)
+    assert set(trainer.ema_state) == set(net.state_dict())
+    assert all(trainer.ema_state[k].shape == net.state_dict()[k].shape for k in net.state_dict())
+
+
+def test_lr_cosine_decae():
+    net = SuperTatetiNet()
+    trainer = T.PuzzleTrainer(net, lr=1e-3, seed=0, lr_schedule="cosine",
+                              lr_final_frac=0.01, lr_decay_epochs=10)
+    assert trainer.scheduler is not None
+    l0 = trainer.optimizer.param_groups[0]["lr"]
+    for _ in range(3):
+        trainer.step_scheduler()
+    assert trainer.optimizer.param_groups[0]["lr"] < l0
+
+
+def test_lr_schedule_none_no_crea_scheduler():
+    net = SuperTatetiNet()
+    trainer = T.PuzzleTrainer(net, lr=1e-3, seed=0, lr_schedule="none")
+    assert trainer.scheduler is None
+    trainer.step_scheduler()   # no debe fallar
+
+
+def test_ranking_loss_corre_y_es_finita():
+    ps = _puzzles_mate1(4)
+    torch.manual_seed(0)
+    net = SuperTatetiNet()
+    trainer = T.PuzzleTrainer(net, lr=1e-3, seed=0, augment=False,
+                              rank_coef=0.5, rank_margin=1.0)
+    loss, ploss, vloss = trainer.train_epoch(ps, batch_size=2)
+    assert loss == loss and ploss == ploss
+
+
+def test_train_epoch_con_pesos_upsamplea_dificiles():
+    ps = _puzzles_mate1(6)
+    torch.manual_seed(0)
+    net = SuperTatetiNet()
+    trainer = T.PuzzleTrainer(net, lr=1e-3, seed=0, augment=False)
+    w = np.zeros(len(ps)); w[0] = 1.0        # solo el primero tiene masa
+    trainer.train_epoch(ps, batch_size=3, weights=w)   # no debe fallar y usa solo el índice 0
+
+
+# ---------------------- layout de checkpoints ----------------------
+def test_layout_defaults_init_y_out_apuntan_al_canon():
+    args = T.parse_args([])
+    canon_pth, canon_report = L.canon_paths(T.Path(args.out))
+    assert T.Path(args.init) == canon_pth
+    assert T.Path(args.out) == canon_pth
+    assert canon_pth.name == L.CANON_PTH
+    assert canon_report.name == L.CANON_REPORT
+
+
+def test_layout_next_run_dir_incremental_y_tag(tmp_path):
+    assert L.next_run_dir(tmp_path / "puzzle_canon.pth", "puzzle").name == "0001_puzzle"
+    (tmp_path / L.RUNS_DIRNAME / "0001_puzzle").mkdir(parents=True)
+    (tmp_path / L.RUNS_DIRNAME / "0002_otro").mkdir(parents=True)
+    assert L.next_run_dir(tmp_path / "puzzle_canon.pth", "retry1").name == "0003_retry1"
+
+
+def test_layout_sanitize_tag_y_run_paths(tmp_path):
+    assert L.sanitize_tag("retry 1/2") == "retry-1-2"
+    assert L.sanitize_tag("") == "puzzle"
+    run_dir = tmp_path / "runs" / "0001_puzzle"
+    final, report, levels = L.run_paths(run_dir, "puzzle")
+    assert final == run_dir / "puzzle.pth"
+    assert report == run_dir / "puzzle_report.json"
+    assert levels == run_dir / "levels"
+
+
+def test_layout_canon_deriva_del_directorio_de_out(tmp_path):
+    canon_pth, canon_report = L.canon_paths(tmp_path / "sub" / "algo.pth")
+    assert canon_pth == tmp_path / "sub" / L.CANON_PTH
+    assert canon_report == tmp_path / "sub" / L.CANON_REPORT

@@ -48,9 +48,11 @@ class EvoConfig:
     """Parámetros del ciclo evolutivo memético (gradiente + mutación + selección)."""
     # --- modelo y salida ---
     seed_model: Path = Path("trainPuzzles/my_model.pth")
-    out: Path = Path("trainPuzzles/checkpoints/evo/best.pth")
+    out: Path = Path("trainPuzzles/checkpoints/puzzle_canon.pth")  # canon: último terminado
     out_test: Path | None = None              # checkpoint elegido por el test honesto (diagnóstico)
     report: Path | None = None
+    run_name: str = "evo"                     # etiqueta de la corrida archivada en checkpoints/runs/
+    no_canon: bool = False                    # no copiar a puzzle_canon.pth (experimentos A/B)
 
     # --- población ---
     population: int = 30
@@ -97,6 +99,8 @@ class EvoConfig:
             "out": str(self.out),
             "out_test": None if self.out_test is None else str(self.out_test),
             "report": None if self.report is None else str(self.report),
+            "run_name": self.run_name,
+            "no_canon": self.no_canon,
             "population": self.population,
             "survivors": self.survivors,
             "generations": self.generations,

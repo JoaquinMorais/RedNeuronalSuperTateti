@@ -19,8 +19,11 @@
 # Ronda 1: arranca desde el modelo canónico (CANON_INIT) con PPL puzzles por
 # nivel. Si el nivel objetivo no queda 'mastered', reintenta con más puzzles
 # (+PPL_STEP), semilla de train nueva (=> datos nuevos) y --eval-seed FIJO
-# (=> el mismo examen, comparación justa), reanudando desde el mejor modelo
-# de la ronda previa.
+# (=> el mismo examen, comparación justa), reanudando desde el canon
+# (puzzle_canon.pth), que cada ronda actualiza con el modelo que terminó.
+#
+# Cada ronda se archiva en checkpoints/runs/NNNN_retryN/ y actualiza el canon;
+# el chequeo de 'mastered' lee siempre checkpoints/puzzle_canon_report.json.
 #
 # Parámetros (variables de entorno):
 #   TARGET_LEVEL=2  ROUNDS=5  PPL=25000  PPL_STEP=25000
@@ -28,6 +31,8 @@
 #   PLATEAU=1500      (corte anticipado si el mejor acierto no mejora)
 #   SEED=0  EVAL_SEED=0  DROPOUT=0.2  WEIGHT_DECAY=1e-4  WARM_START=1
 #   THRESHOLD=0.90  MAX_LEVEL=3
+#   START_LEVEL=2     (nivel donde arranca el currículo; >1 salta el reentrenamiento
+#                      de mate-1 y calienta directo en mate-2 desde CANON_INIT/canon)
 #   CANON_INIT=trainPuzzles/checkpoints/puzzle_canon.pth
 #   OUTDIR=trainPuzzles/checkpoints
 #
@@ -80,10 +85,12 @@ WEIGHT_DECAY="${WEIGHT_DECAY:-1e-4}"
 WARM_START="${WARM_START:-1}"
 THRESHOLD="${THRESHOLD:-0.90}"
 MAX_LEVEL="${MAX_LEVEL:-3}"
+START_LEVEL="${START_LEVEL:-1}"
 CANON_INIT="${CANON_INIT:-trainPuzzles/checkpoints/puzzle_canon.pth}"
 OUTDIR="${OUTDIR:-trainPuzzles/checkpoints}"
 
-REL="${OUTDIR#trainPuzzles/}"
+canon_pth="${OUTDIR}/puzzle_canon.pth"
+report_host="${OUTDIR}/puzzle_canon_report.json"
 
 ppl="$PPL"
 seed="$SEED"
@@ -92,23 +99,53 @@ round=1
 
 # --- 4. Bucle de rondas -----------------------------------------------------
 while [ "$round" -le "$ROUNDS" ]; do
-  out_cont="trainPuzzles/${REL}/puzzle_retry${round}.pth"
-  out_host="${OUTDIR}/puzzle_retry${round}.pth"
-  report_host="${OUTDIR}/puzzle_retry${round}_report.json"
+  run_name="retry${round}"
   maxg=$(( ppl * 5 ))
 
-  echo "==== Ronda ${round}/${ROUNDS} | puzzles/nivel=${ppl} | max-games=${maxg} | seed=${seed} | eval-seed=${EVAL_SEED} | init=${init} ===="
+  echo "==== Ronda ${round}/${ROUNDS} | puzzles/nivel=${ppl} | max-games=${maxg} | seed=${seed} | eval-seed=${EVAL_SEED} | start-level=${START_LEVEL} | init=${init} | run=${run_name} ===="
+
+  LR_SCHEDULE="${LR_SCHEDULE:-none}"
+  LR_FINAL_FRAC="${LR_FINAL_FRAC:-0.03}"
+  TTA="${TTA:-0}"
+  EVAL_EVERY="${EVAL_EVERY:-1}"
+  HARD_MINING="${HARD_MINING:-0}"
+  MINE_EVERY="${MINE_EVERY:-10}"
+  MINE_BOOST="${MINE_BOOST:-3.0}"
+  MINE_WARMUP="${MINE_WARMUP:-25}"
+  EMA="${EMA:-0}"
+  EMA_DECAY="${EMA_DECAY:-0.999}"
+  RANK_COEF="${RANK_COEF:-0.0}"
+  RANK_MARGIN="${RANK_MARGIN:-1.0}"
+
+  tta_flag=""
+  if [ "$TTA" = "1" ] || [ "$TTA" = "true" ]; then
+    tta_flag="--tta"
+  fi
+  hard_flag=""
+  if [ "$HARD_MINING" = "1" ] || [ "$HARD_MINING" = "true" ]; then
+    hard_flag="--hard-mining"
+  fi
+  ema_flag=""
+  if [ "$EMA" = "1" ] || [ "$EMA" = "true" ]; then
+    ema_flag="--ema"
+  fi
 
   docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
     -v ./trainPuzzles:/app/trainPuzzles trainer \
     python -m trainPuzzles \
       --levels 1 --max-level "${MAX_LEVEL}" --threshold "${THRESHOLD}" \
+      --start-level "${START_LEVEL}" --stop-at-level "${TARGET_LEVEL}" \
       --games-budget 0 --max-games "${maxg}" \
       --puzzles-per-level "${ppl}" \
       --dropout "${DROPOUT}" --weight-decay "${WEIGHT_DECAY}" \
+      --lr-schedule "${LR_SCHEDULE}" --lr-final-frac "${LR_FINAL_FRAC}" \
+      ${tta_flag} --eval-every "${EVAL_EVERY}" \
+      ${hard_flag} --mine-every "${MINE_EVERY}" --mine-boost "${MINE_BOOST}" --mine-warmup "${MINE_WARMUP}" \
+      ${ema_flag} --ema-decay "${EMA_DECAY}" \
+      --rank-coef "${RANK_COEF}" --rank-margin "${RANK_MARGIN}" \
       --max-epochs "${MAX_EPOCHS}" --plateau-stop "${PLATEAU}" \
       --seed "${seed}" --eval-seed "${EVAL_SEED}" \
-      --init "${init}" --out "${out_cont}"
+      --init "${init}" --out "${canon_pth}" --run-name "${run_name}"
 
   if [ ! -f "$report_host" ]; then
     echo "!! No se encontró el reporte ${report_host}; abortando."
@@ -131,14 +168,14 @@ PY
   echo "---- Ronda ${round}: mate ${TARGET_LEVEL} mastered=${mastered}"
 
   if [ "$mastered" = "1" ]; then
-    echo "**** mate ${TARGET_LEVEL} DOMINADO en la ronda ${round}. Modelo: ${out_host}"
+    echo "**** mate ${TARGET_LEVEL} DOMINADO en la ronda ${round}. Modelo canon: ${canon_pth}"
     exit 0
   fi
 
   ppl=$(( ppl + PPL_STEP ))
   seed=$(( seed + 1 ))
   if [ "$WARM_START" = "1" ]; then
-    init="$out_cont"
+    init="$canon_pth"
   fi
   round=$(( round + 1 ))
 done

@@ -81,7 +81,8 @@ seguridad. Si el objetivo no se alcanza, el log avisa: `aviso: no se alcanzó el
 | `nivel 2: N epochs sin mejorar ... se corta por --plateau-stop N` | Se estancó y `--plateau-stop` cortó la corrida (para reintentar con más datos). |
 | `Baseline (red inicial) por nivel: mate 1: 93.1% ...` | Acierto de la red de partida en cada set de evaluación. |
 | `RESUMEN DEL APRENDIZAJE` (al final) | Tabla con `base`, `final`, `cambio`, `epochs`, `dominio` y una clasificación por nivel. |
-| `Reporte guardado en ...` | Se escribió el JSON con todo el resumen (junto al modelo `<out>_report.json`). |
+| `Reporte guardado en ...` | Se escribió el JSON con todo el resumen (por defecto `checkpoints/puzzle_canon_report.json`; también en `checkpoints/runs/NNNN_<run-name>/`). |
+| `Modelo guardado en .../puzzle_canon.pth` | El modelo final se copió al canon (el último terminado); el próximo `--init` reanuda desde ahí. |
 
 ---
 
@@ -106,8 +107,11 @@ docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
     --games-budget 0 --max-games 200000 \
     --dropout 0.2 --weight-decay 1e-4 \
     --init trainPuzzles/checkpoints/puzzle_canon.pth \
-    --out  trainPuzzles/checkpoints/puzzle_canon_m3.pth
+    --run-name m3
 ```
+
+(sin `--out`, el modelo final va al canon `checkpoints/puzzle_canon.pth` y se archiva en
+`checkpoints/runs/NNNN_m3/`)
 
 ### 4.3 Corrida local (sin Docker)
 
@@ -119,7 +123,7 @@ python3 -m trainPuzzles \
   --games-budget 0 --max-games 200000 \
   --dropout 0.2 --weight-decay 1e-4 \
   --init trainPuzzles/checkpoints/puzzle_canon.pth \
-  --out  trainPuzzles/checkpoints/puzzle_canon_m3.pth
+  --run-name m3
 ```
 
 ### 4.4 Experimento A/B de regularización (mismo examen, con y sin regularización)
@@ -132,7 +136,7 @@ docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
   -v ./trainPuzzles:/app/trainPuzzles trainer \
   python -m trainPuzzles --levels 1 --max-level 2 --threshold 0.90 \
     --games-budget 0 --max-games 50000 --puzzles-per-level 10000 \
-    --plateau-stop 1500 --seed 0 --eval-seed 0 \
+    --plateau-stop 1500 --seed 0 --eval-seed 0 --no-canon --run-name ab_control \
     --init trainPuzzles/checkpoints/puzzle_canon.pth \
     --out  trainPuzzles/checkpoints/ab_control.pth
 
@@ -141,17 +145,21 @@ docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
   -v ./trainPuzzles:/app/trainPuzzles trainer \
   python -m trainPuzzles --levels 1 --max-level 2 --threshold 0.90 \
     --games-budget 0 --max-games 50000 --puzzles-per-level 10000 \
-    --plateau-stop 1500 --seed 0 --eval-seed 0 \
+    --plateau-stop 1500 --seed 0 --eval-seed 0 --no-canon --run-name ab_dropout \
     --dropout 0.2 --weight-decay 1e-4 \
     --init trainPuzzles/checkpoints/puzzle_canon.pth \
     --out  trainPuzzles/checkpoints/ab_dropout.pth
 ```
 
+(`--no-canon` evita pisar `puzzle_canon.pth`; los resultados quedan en
+`checkpoints/runs/`.)
+
 ### 4.5 Reintento automático con más datos (`retrain_loop.sh`)
 
 Repite el entrenamiento subiendo los puzzles cuando se estanca (`--max-epochs 3000` por ronda
-como tope duro, `--plateau-stop 1500` como corte anticipado), reanudando desde el mejor modelo
-de la ronda anterior.
+como tope duro, `--plateau-stop 1500` como corte anticipado), reanudando desde el canon
+(`puzzle_canon.pth`) que cada ronda actualiza. Cada ronda se archiva en
+`checkpoints/runs/NNNN_retryN/`.
 
 **En primer plano (ves todo en vivo):**
 
@@ -168,7 +176,27 @@ ROUNDS=2 setsid bash trainPuzzles/retrain_loop.sh > /tmp/opencode/retrain.log 2>
 
 Parámetros por variable de entorno: `TARGET_LEVEL` (2), `ROUNDS` (5), `PPL` (25000),
 `PPL_STEP` (25000), `MAX_EPOCHS` (3000), `PLATEAU` (1500), `SEED` (0), `EVAL_SEED` (0),
-`DROPOUT` (0.2), `WEIGHT_DECAY` (1e-4), `WARM_START` (1), `THRESHOLD` (0.90), `MAX_LEVEL` (3).
+`DROPOUT` (0.2), `WEIGHT_DECAY` (1e-4), `WARM_START` (1), `THRESHOLD` (0.90), `MAX_LEVEL` (3),
+`START_LEVEL` (1). Cada ronda corre con `--stop-at-level $TARGET_LEVEL`, así que termina
+justo después del nivel objetivo (si ya hay un mate-1 dominado, `START_LEVEL=2` hace que la
+ronda **arranque directo en mate-2** calentando desde el canon y no desperdicie tiempo
+reentrenando mate-1).
+
+**Técnicas de refuerzo** (para exprimir el top-1 cuando mate-2 queda cerca): `LR_SCHEDULE`
+(`none`/`cosine`), `LR_FINAL_FRAC`, `TTA` (`1` = promedia las 8 simetrías al evaluar),
+`EVAL_EVERY`, `HARD_MINING` + `MINE_EVERY`/`MINE_BOOST`/`MINE_WARMUP` (sobre-muestrea donde
+falla el top-1), `EMA` + `EMA_DECAY` (promedio de pesos) y `RANK_COEF`/`RANK_MARGIN` (pérdida
+de margen que desempata el #1 vs #2). La línea `[TRAIN]` muestra siempre **T1/T2/T3**.
+Ejemplo de corrida nocturna combinándolas:
+
+```bash
+TARGET_LEVEL=2 ROUNDS=3 PPL=25000 PPL_STEP=25000 MAX_EPOCHS=3000 PLATEAU=0 \
+SEED=0 EVAL_SEED=0 DROPOUT=0.2 WEIGHT_DECAY=1e-4 WARM_START=1 THRESHOLD=0.90 MAX_LEVEL=3 \
+LR_SCHEDULE=cosine LR_FINAL_FRAC=0.03 TTA=1 EVAL_EVERY=2 \
+HARD_MINING=1 MINE_EVERY=10 MINE_BOOST=3.0 MINE_WARMUP=25 \
+EMA=1 EMA_DECAY=0.999 RANK_COEF=0.5 RANK_MARGIN=1.0 \
+setsid bash trainPuzzles/retrain_loop.sh > /tmp/opencode/night.log 2>&1 < /dev/null &
+```
 
 **Desde Windows (Docker Desktop + WSL):** usá la variante `retrain_loop_windows.sh`, que se
 ubica sola en la raíz del repo y verifica Docker/Python. Parado en la raíz del repo:
@@ -203,8 +231,11 @@ docker ps --filter ancestor=redneuronalsupertateti-trainer
 
 ### 4.7 Leer el resultado de una corrida
 
+El canon (`puzzle_canon_report.json`) siempre refleja la última corrida; cada corrida
+también deja su reporte en `checkpoints/runs/NNNN_<run-name>/`.
+
 ```bash
-python3 -c "import json; r=json.load(open('trainPuzzles/checkpoints/puzzle_retry1_report.json')); \
+python3 -c "import json; r=json.load(open('trainPuzzles/checkpoints/puzzle_canon_report.json')); \
 print([(l['level'], l['baseline'], l['final'], l['best'], l['mastered']) for l in r['levels']])"
 ```
 
@@ -216,16 +247,20 @@ print([(l['level'], l['baseline'], l['final'], l['best'], l['mastered']) for l i
 
 | Flag | Default | Qué hace |
 |---|---|---|
-| `--init` | `model.pth` | `.pth` de partida. Si no existe, arranca de una red aleatoria. |
-| `--out` | `trainPuzzles/checkpoints/puzzle_net.pth` | `.pth` de salida (el mejor estado del último nivel). |
-| `--report` | `<out>_report.json` | Reporte JSON del aprendizaje. |
+| `--init` | `trainPuzzles/checkpoints/puzzle_canon.pth` | `.pth` de partida (el canon: el último modelo terminado). Si no existe, arranca de una red aleatoria. |
+| `--out` | `trainPuzzles/checkpoints/puzzle_canon.pth` | `.pth` de salida (por defecto el canon). También se archiva en `checkpoints/runs/NNNN_<run-name>/`. |
+| `--run-name` | `puzzle` | Etiqueta de la corrida archivada en `checkpoints/runs/`. |
+| `--no-canon` | off | No copiar el modelo final a `puzzle_canon.pth` (para experimentos que no deben pisar la cadena). |
+| `--report` | `<out>_report.json` | Reporte JSON del aprendizaje (por defecto `puzzle_canon_report.json`). |
 
 ### Currículo y dominio de nivel
 
 | Flag | Default | Qué hace |
 |---|---|---|
-| `--levels` | `4` | Niveles iniciales pre-generados (`1..N`). |
+| `--levels` | `4` | Niveles iniciales pre-generados (`1..N`); la evaluación se genera de `1..N` y el entrenamiento solo desde `--start-level..N`. |
+| `--start-level` | `1` | Nivel donde arranca el currículo. Con `>1` salta el reentrenamiento de los niveles previos (p. ej. `2` arranca en mate-2 calentando desde `--init`). |
 | `--max-level` | `0` | Nivel máximo a alcanzar. `0` = sin tope. |
+| `--stop-at-level` | `0` | Termina el currículo tras procesar este nivel (dominado o no) y guarda el reporte; `0` = off. |
 | `--min-level-puzzles` | `200` | Mínimo de puzzles para considerar entrenable un nivel nuevo. |
 | `--threshold` | `0.95` | Acierto mínimo en evaluación para dominar un nivel. |
 | `--retention-threshold` | `= --threshold` | Acierto mínimo en la unión de niveles previos (anti-olvido). |
@@ -235,6 +270,7 @@ print([(l['level'], l['baseline'], l['final'], l['best'], l['mastered']) for l i
 | `--plateau-patience` | `10` | Avisa si pasan N epochs sin mejorar el mejor acierto. |
 | `--plateau-stop` | `0` | Corta el nivel y la corrida si pasan N epochs sin mejorar (`0` = off). |
 | `--log-every` | `10` | Imprime la línea `[TRAIN]` 1 de cada N epochs (`<=0` = todas). |
+| `--eval-every` | `1` | Evalúa/selecciona el mejor modelo cada N epochs (abarata corridas largas). |
 | `--revision-epochs` | `6` | Epochs de revisión anti-olvido tras dominar cada nivel. |
 | `--revision-puzzles` | `500` | Puzzles por fase de revisión. |
 | `--big` | `0.20` | Cambio (en acierto) para clasificar "mejoró/empeoró mucho". |
@@ -258,9 +294,21 @@ print([(l['level'], l['baseline'], l['final'], l['best'], l['mastered']) for l i
 | `--no-augment` | off | Desactiva las simetrías D4 (por defecto, una al azar por muestra y epoch). |
 | `--batch-size` | `64` | Tamaño de lote. |
 | `--lr` | `3e-4` | Learning rate (Adam). |
+| `--lr-schedule` | `none` | Programa de LR: `none` o `cosine` (decae de `--lr` a `--lr × --lr-final-frac`). |
+| `--lr-final-frac` | `0.03` | Fracción final del LR para el cosine. |
+| `--lr-decay-epochs` | `0` | `T_max` del cosine; `0` = usar `--max-epochs` (o `3000`). |
+| `--tta` | off | Promedia la política sobre las 8 simetrías D4 al evaluar (sube el acierto, más lento). |
 | `--dropout` | `0.0` | Dropout **funcional** en las capas compartidas (solo entrenando; en eval está apagado). No agrega módulos, el `state_dict` queda idéntico. `0` = off. |
 | `--weight-decay` | `0.0` | Penalización L2 de Adam (weight decay). `0` = off. |
 | `--value-coef` | `0.0` | Peso de la pérdida de la cabeza de valor. `0` = off. |
+| `--hard-mining` | off | Hard-example mining: sobre-muestrea los puzzles donde el top-1 falla. |
+| `--mine-every` | `10` | Recalcula los pesos del minado cada N epochs. |
+| `--mine-boost` | `3.0` | Peso de los puzzles fallados. |
+| `--mine-warmup` | `25` | Epochs iniciales sin minado. |
+| `--ema` | off | Promedio exponencial de pesos; se evalúa y se guarda el mejor (red o EMA). |
+| `--ema-decay` | `0.999` | Factor de decaimiento del EMA. |
+| `--rank-coef` | `0.0` | Coeficiente de la pérdida de ranking (margen) sumada a la cross-entropy. |
+| `--rank-margin` | `1.0` | Margen de la pérdida de ranking (empuja la mejor jugada por encima del mejor señuelo). |
 | `--replay-frac` | `0.30` | Fracción de puzzles de niveles previos en cada nivel (anti-olvido). |
 
 ### Reproducibilidad

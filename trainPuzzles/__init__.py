@@ -11,5 +11,5 @@ Ver ``README.md`` en esta carpeta para instrucciones de ejecución.
 acierto; su configuración vive en ``evo_config``.
 """
 
-__all__ = ["puzzles", "train", "evo_config", "evolve_puzzles"]
+__all__ = ["puzzles", "canon", "layout", "train", "evo_config", "evolve_puzzles"]
 __version__ = "1.1.0"

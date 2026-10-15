@@ -21,6 +21,11 @@ Flujo:
      (mejoró mucho/poco, sin aprendizaje claro, empeoró poco/mucho) y guarda un
      reporte JSON junto al modelo (también de forma incremental).
 
+Los checkpoints se ordenan así (ver `layout.py`): cada corrida archiva sus artefactos
+en `checkpoints/runs/NNNN_<tag>/` (modelo final, reporte y `levels/levelN_best.pth`) y
+el modelo final se copia siempre a `checkpoints/puzzle_canon.pth`, que es el punto de
+partida por defecto (`--init`) para reanudar el próximo entrenamiento.
+
 El modelo se guarda como `state_dict` plano, compatible con `play.py` y
 `evolution.modelstore`. No importa ni modifica `mcts.py`, `trainer.py` ni `evolution/`.
 """
@@ -41,7 +46,7 @@ import torch.optim as optim
 
 from model import SuperTatetiNet
 
-from . import canon
+from . import canon, layout
 from .puzzles import Puzzle, harvest
 
 
@@ -145,19 +150,48 @@ class PuzzleTrainer:
     """
 
     def __init__(self, net: SuperTatetiNet, lr: float = 3e-4, value_coef: float = 0.0,
-                 seed: int = 0, augment: bool = True, weight_decay: float = 0.0):
+                 seed: int = 0, augment: bool = True, weight_decay: float = 0.0,
+                 lr_schedule: str = "none", lr_final_frac: float = 0.03, lr_decay_epochs: int = 0,
+                 max_epochs: int = 0, ema_decay: float = 0.0, rank_coef: float = 0.0,
+                 rank_margin: float = 1.0):
         self.net = net
         self.value_coef = value_coef
         self.augment = augment
+        self.rank_coef = float(rank_coef)
+        self.rank_margin = float(rank_margin)
+        self.ema_decay = float(ema_decay)
         self.optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
         self.rng = random.Random(seed)
         self.np_rng = np.random.default_rng(seed)
+        self.scheduler = None
+        self.ema_state = None
+        if ema_decay > 0.0:
+            self.ema_state = {k: v.detach().clone() for k, v in net.state_dict().items()}
+        if lr_schedule == "cosine":
+            t_max = lr_decay_epochs
+            if t_max <= 0:
+                t_max = max_epochs if max_epochs > 0 else 3000
+            eta_min = lr * float(lr_final_frac)
+            try:
+                self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=t_max, eta_min=eta_min)
+            except Exception:
+                self.scheduler = None
 
-    def train_epoch(self, puzzles: list[Puzzle], batch_size: int) -> tuple[float, float, float]:
+    def train_epoch(self, puzzles: list[Puzzle], batch_size: int,
+                     weights: np.ndarray | None = None) -> tuple[float, float, float]:
         if not puzzles:
             return (0.0, 0.0, 0.0)
         self.net.train()
-        order = list(range(len(puzzles)))
+        n = len(puzzles)
+        if weights is not None:
+            w = np.asarray(weights, dtype=np.float64)
+            if w.shape[0] != n:
+                w = np.ones(n, dtype=np.float64)
+            p = w / (w.sum() + 1e-12)
+            order_base = np.random.choice(n, size=n, replace=True, p=p)
+        else:
+            order_base = list(range(n))
+        order = list(order_base)
         self.rng.shuffle(order)
         losses = []
         for i in range(0, len(order), batch_size):
@@ -172,33 +206,150 @@ class PuzzleTrainer:
             targets = torch.from_numpy(targets_np)
 
             pred_policy, pred_value = self.net(states, masks)
-            policy_loss = -(targets * torch.log(pred_policy + 1e-8)).sum(dim=1).mean()
+            logp = torch.log(pred_policy + 1e-8)
+            policy_loss = -(targets * logp).sum(dim=1).mean()
             value_loss = nn.functional.mse_loss(pred_value, torch.ones_like(pred_value))
             loss = policy_loss + self.value_coef * value_loss
+            if self.rank_coef > 0.0:
+                opt = targets > 0.0
+                masked_logp = logp.masked_fill(masks == 0, -1e9)
+                best = masked_logp.masked_fill(~opt, -1e9).max(dim=1).values
+                decoy = masked_logp.masked_fill(opt, -1e9).max(dim=1).values
+                rank = torch.clamp(self.rank_margin + decoy - best, min=0.0).mean()
+                loss = loss + self.rank_coef * rank
 
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+            if self.ema_state is not None and self.ema_decay > 0.0:
+                with torch.no_grad():
+                    for k, p in self.net.state_dict().items():
+                        if k in self.ema_state:
+                            self.ema_state[k] = self.ema_decay * self.ema_state[k] + (1.0 - self.ema_decay) * p.detach()
             losses.append((loss.item(), policy_loss.item(), value_loss.item()))
         arr = np.asarray(losses, dtype=np.float64)
         return float(arr[:, 0].mean()), float(arr[:, 1].mean()), float(arr[:, 2].mean())
 
+    def step_scheduler(self) -> None:
+        if self.scheduler is not None:
+            try:
+                self.scheduler.step()
+            except Exception:
+                pass
+
 
 @torch.no_grad()
-def accuracy(net: SuperTatetiNet, puzzles: list[Puzzle]) -> float:
+def accuracy(net: SuperTatetiNet, puzzles: list[Puzzle], tta: bool = False) -> float:
     """% de puzzles donde la jugada elegida (argmax legal) está entre las óptimas."""
+    m = topk_accuracy(net, puzzles, ks=(1,), tta=tta)
+    return float(m.get(1, 0.0))
+
+
+@torch.no_grad()
+def topk_accuracy(net: SuperTatetiNet, puzzles: list[Puzzle], ks=(1, 2, 3), tta: bool = False) -> dict:
+    """Top-k accuracy. ks=(1,2,3) por defecto."""
     if not puzzles:
-        return 0.0
+        out = {}
+        for k in ks:
+            out[k] = 0.0
+        return out
     net.eval()
-    correct = 0
-    for i in range(0, len(puzzles), 1024):                      # por lotes: mucho más rápido que uno a uno
-        chunk = puzzles[i:i + 1024]
-        states = torch.from_numpy(np.stack([p.state for p in chunk]))
-        masks = torch.from_numpy(np.stack([p.mask for p in chunk]))
-        policy, _ = net(states, masks)
-        moves = torch.argmax(policy.masked_fill(masks == 0, -1.0), dim=-1).tolist()
-        correct += sum(1 for mv, p in zip(moves, chunk) if mv in p.best_moves)
-    return correct / len(puzzles)
+    best_list = []
+    for p in puzzles:
+        best_list.append(set(p.best_moves))
+    states_np_full = np.stack([p.state for p in puzzles])
+    masks_np_full = np.stack([p.mask for p in puzzles])
+    kmax = max(ks) if ks else 1
+    res_correct = {k: 0 for k in ks}
+    for i in range(0, len(puzzles), 1024):
+        chunk_states = states_np_full[i:i + 1024]
+        chunk_masks = masks_np_full[i:i + 1024]
+        chunk_best = best_list[i:i + 1024]
+        B = len(chunk_states)
+        if tta and B > 0:
+            p_accum = np.zeros((B, 81), dtype=np.float32)
+            zeros_t = np.zeros((B, 81), dtype=np.float32)
+            for ksym in range(len(canon.SYM_MAPS)):
+                s_k, m_k, _ = canon.apply_sym(chunk_states, chunk_masks, zeros_t, ksym)
+                pol_k, _ = net(torch.from_numpy(s_k), torch.from_numpy(m_k))
+                pol_k_np = pol_k.detach().cpu().numpy().astype(np.float32)
+                p_back = np.zeros_like(pol_k_np)
+                inv = canon.IDX81[ksym]
+                p_back[:, inv] = pol_k_np
+                p_accum += p_back
+            policy_np = p_accum / float(len(canon.SYM_MAPS))
+        else:
+            pol, _ = net(torch.from_numpy(chunk_states), torch.from_numpy(chunk_masks))
+            policy_np = pol.detach().cpu().numpy().astype(np.float32)
+        for j in range(B):
+            msk = chunk_masks[j]
+            p_j = policy_np[j].copy()
+            p_j[msk == 0] = -1e18
+            idx = np.argsort(-p_j)[:kmax]
+            for k in ks:
+                topkset = set(idx[:k].tolist())
+                if chunk_best[j].intersection(topkset):
+                    res_correct[k] += 1
+    out = {}
+    n = len(puzzles)
+    for k in ks:
+        out[k] = res_correct[k] / n if n > 0 else 0.0
+    return out
+
+
+@torch.no_grad()
+def per_sample_correct(net: SuperTatetiNet, puzzles: list[Puzzle], tta: bool = False) -> np.ndarray:
+    if not puzzles:
+        return np.array([], dtype=bool)
+    m1 = topk_accuracy(net, puzzles, ks=(1,), tta=tta)
+    acc1 = m1.get(1, 0.0)
+    n = len(puzzles)
+    # compute per-sample efficiently: small loop
+    correct_arr = np.zeros(n, dtype=bool)
+    states_np_full = np.stack([p.state for p in puzzles])
+    masks_np_full = np.stack([p.mask for p in puzzles])
+    for i in range(0, n, 1024):
+        chunk_states = states_np_full[i:i + 1024]
+        chunk_masks = masks_np_full[i:i + 1024]
+        B = len(chunk_states)
+        if tta and B > 0:
+            p_accum = np.zeros((B, 81), dtype=np.float32)
+            zeros_t = np.zeros((B, 81), dtype=np.float32)
+            for ksym in range(len(canon.SYM_MAPS)):
+                s_k, m_k, _ = canon.apply_sym(chunk_states, chunk_masks, zeros_t, ksym)
+                pol_k, _ = net(torch.from_numpy(s_k), torch.from_numpy(m_k))
+                pol_k_np = pol_k.detach().cpu().numpy().astype(np.float32)
+                p_back = np.zeros_like(pol_k_np)
+                inv = canon.IDX81[ksym]
+                p_back[:, inv] = pol_k_np
+                p_accum += p_back
+            policy_np = p_accum / float(len(canon.SYM_MAPS))
+        else:
+            pol, _ = net(torch.from_numpy(chunk_states), torch.from_numpy(chunk_masks))
+            policy_np = pol.detach().cpu().numpy().astype(np.float32)
+        for j in range(B):
+            msk = chunk_masks[j]
+            p_j = policy_np[j].copy()
+            p_j[msk == 0] = -1e18
+            mv = int(np.argmax(p_j))
+            if mv in puzzles[i + j].best_moves:
+                correct_arr[i + j] = True
+            else:
+                correct_arr[i + j] = False
+    return correct_arr
+
+
+@torch.no_grad()
+def compute_weights(net: SuperTatetiNet, pool: list[Puzzle], boost: float,
+                    warmup_epoch: int, current_epoch: int, mine_every: int) -> np.ndarray:
+    if not pool:
+        return np.array([], dtype=np.float64)
+    if mine_every <= 0 or current_epoch < warmup_epoch or current_epoch % mine_every != 0:
+        return np.ones(len(pool), dtype=np.float64)
+    c = per_sample_correct(net, pool, tta=False)
+    w = np.ones(len(pool), dtype=np.float64)
+    w[~c] = float(boost)
+    return np.maximum(w, 1.0)
 
 
 # ----------------------------------------------------------------------
@@ -300,16 +451,34 @@ def load_net(init_path: Path, dropout: float = 0.0) -> SuperTatetiNet:
     return net
 
 
+def scheduled_levels(args) -> tuple[int, int]:
+    """Normaliza (start, levels) desde --start-level / --levels.
+
+    ``start`` es el nivel donde arranca el currículo y ``levels`` el mayor nivel
+    pre-generado; se garantiza ``levels >= start`` para no dejar afuera el nivel
+    inicial cuando arranca por encima de 1.
+    """
+    start = max(1, getattr(args, "start_level", 1))
+    levels = max(args.levels, start)
+    return start, levels
+
+
 def build_sets(args) -> tuple[dict[int, list[Puzzle]], dict[int, list[Puzzle]]]:
-    """Genera los sets iniciales (evaluación y entrenamiento) para 1..--levels."""
+    """Genera los sets iniciales (evaluación y entrenamiento).
+
+    La evaluación se genera para 1..levels (barata y necesaria para medir retención
+    de niveles previos); el entrenamiento solo desde start..levels (los niveles
+    saltados son costosos de generar y no se entrenan en esta corrida).
+    """
+    start, levels = scheduled_levels(args)
     exclude: set = set()
     eval_sets: dict[int, list[Puzzle]] = {}
     train_sets: dict[int, list[Puzzle]] = {}
-    log_phase("[GEN]", f"pre-generando datasets de los niveles 1..{args.levels} "
-                       f"(esto ocurre antes de entrenar)")
-    for n in range(1, args.levels + 1):
+    log_phase("[GEN]", f"pre-generando datasets de los niveles {start}..{levels} "
+                       f"(eval 1..{levels}) (esto ocurre antes de entrenar)")
+    for n in range(1, levels + 1):
         eval_sets[n] = generate_eval_set(n, args, exclude)
-    for n in range(1, args.levels + 1):
+    for n in range(start, levels + 1):
         train_sets[n] = generate_train_set(n, args, exclude)
     return eval_sets, train_sets
 
@@ -328,6 +497,8 @@ def train_level(net: SuperTatetiNet, trainer: PuzzleTrainer, args, level: int,
                 base: float, ret_threshold: float) -> dict:
     """Entrena un nivel hasta dominarlo, agotar el tope o recibir parada."""
     best_acc = -1.0
+    best_acc2 = 0.0
+    best_acc3 = 0.0
     best_state = None
     best_epoch = 0
     epoch = 0
@@ -351,41 +522,80 @@ def train_level(net: SuperTatetiNet, trainer: PuzzleTrainer, args, level: int,
             break
         epoch += 1
         t0 = time.time()
-        loss, ploss, vloss = trainer.train_epoch(pool, args.batch_size)
-        acc = accuracy(net, evalset)
-        ret = accuracy(net, retention_eval)
-        tr_acc = accuracy(net, probe)
+        w_pool = compute_weights(net, pool, args.mine_boost,
+                                 args.mine_warmup, epoch, args.mine_every) if getattr(args, 'hard_mining', False) else None
+        loss, ploss, vloss = trainer.train_epoch(pool, args.batch_size, weights=w_pool)
+        trainer.step_scheduler()
+        do_eval = (args.eval_every <= 0) or (epoch % args.eval_every == 0)
+        cand_is_ema = False
+        if do_eval:
+            m_eval = topk_accuracy(net, evalset, ks=(1,2,3), tta=getattr(args, 'tta', False))
+            m_ret = topk_accuracy(net, retention_eval, ks=(1,), tta=getattr(args, 'tta', False))
+            m_tr = topk_accuracy(net, probe, ks=(1,), tta=getattr(args, 'tta', False))
+            acc1, acc2, acc3 = m_eval.get(1,0.0), m_eval.get(2,0.0), m_eval.get(3,0.0)
+            ret1 = m_ret.get(1,0.0)
+            tr1 = m_tr.get(1,0.0)
+            if getattr(args, 'ema', False) and getattr(trainer, 'ema_state', None) is not None:
+                state_bak = {k: v.detach().clone() for k, v in net.state_dict().items()}
+                ema_sd = trainer.ema_state
+                net.load_state_dict({k: ema_sd[k].detach().clone().to(v.device, v.dtype) for k,v in state_bak.items()})
+                m_eval_e = topk_accuracy(net, evalset, ks=(1,2,3), tta=getattr(args, 'tta', False))
+                m_ret_e = topk_accuracy(net, retention_eval, ks=(1,), tta=getattr(args, 'tta', False))
+                acc1_e = m_eval_e.get(1,0.0)
+                net.load_state_dict(state_bak)
+                if acc1_e > acc1:
+                    acc1_cand, acc2_cand, acc3_cand, ret1_cand = acc1_e, m_eval_e.get(2,0.0), m_eval_e.get(3,0.0), m_ret_e.get(1,0.0)
+                    cand_is_ema = True
+                else:
+                    acc1_cand, acc2_cand, acc3_cand, ret1_cand = acc1, acc2, acc3, ret1
+                    cand_is_ema = False
+            else:
+                acc1_cand, acc2_cand, acc3_cand, ret1_cand, cand_is_ema = acc1, acc2, acc3, ret1, False
+        else:
+            acc1_cand = best_acc if best_acc >= 0 else accuracy(net, evalset, tta=getattr(args, 'tta', False))
+            acc2_cand = acc3_cand = 0.0; ret1_cand = 0.0; tr1 = 0.0; cand_is_ema = False
         dt = time.time() - t0
 
-        improved = acc > best_acc
-        if improved:
-            best_acc = acc
-            best_state = clone_state(net)
-            best_epoch = epoch
-            plateau = 0
-        else:
-            plateau += 1
+        # El seguimiento del mejor, la racha de dominio y el estancamiento solo
+        # se actualizan en epochs con evaluación completa: en los demás, la retención
+        # queda en 0.0 y reiniciaría la racha (evita que con --eval-every > 1 un nivel
+        # nunca se marque como dominado).
+        improved = False
+        if do_eval:
+            improved = acc1_cand > best_acc
+            if improved:
+                best_acc = acc1_cand
+                best_acc2 = acc2_cand
+                best_acc3 = acc3_cand
+                if cand_is_ema and getattr(trainer, 'ema_state', None) is not None:
+                    best_state = {k: v.detach().clone() for k, v in trainer.ema_state.items()}
+                else:
+                    best_state = clone_state(net)
+                best_epoch = epoch
+                plateau = 0
+            else:
+                plateau += 1
 
-        streak = mastery_step(acc, ret, args.threshold, ret_threshold,
-                              epoch, args.min_epochs, streak)
-        mastered = streak >= args.patience
+            streak = mastery_step(acc1_cand, ret1_cand, args.threshold, ret_threshold,
+                                  epoch, args.min_epochs, streak)
+            mastered = streak >= args.patience
+
+            if plateau and args.plateau_patience and plateau % args.plateau_patience == 0:
+                log_phase("[TRAIN]", f"  aviso: nivel {level} sin mejorar el mejor acierto desde hace "
+                           f"{plateau} epochs (mejor {best_acc * 100:.1f}%).")
 
         every = args.log_every
         if every <= 0 or epoch % every == 0 or improved or mastered:
             status = "MASTERED" if mastered else f"meta {args.threshold * 100:.0f}%"
             log_phase("[TRAIN]",
                       f"  N{level} ep {epoch:3d} | loss {loss:.3f} (P {ploss:.3f} V {vloss:.3f}) | "
-                      f"acierto {acc * 100:5.1f}% base {base * 100:5.1f}% d {(acc - base) * 100:+5.1f} | "
-                      f"train {tr_acc * 100:5.1f}% brecha {(tr_acc - acc) * 100:+5.1f} | "
-                      f"mejor {best_acc * 100:5.1f}% | ret {ret * 100:5.1f}% | "
-                      f"{_bar(acc / args.threshold if args.threshold else 1.0)} {dt:.1f}s | {status}")
-
-        if plateau and args.plateau_patience and plateau % args.plateau_patience == 0:
-            log_phase("[TRAIN]", f"  aviso: nivel {level} sin mejorar el mejor acierto desde hace "
-                       f"{plateau} epochs (mejor {best_acc * 100:.1f}%).")
+                      f"T1 {acc1_cand*100:5.1f}% T2 {acc2_cand*100:5.1f}% T3 {acc3_cand*100:5.1f}% base {base*100:5.1f}% d {(acc1_cand-base)*100:+5.1f} | "
+                      f"train {tr1*100:5.1f}% brecha {(tr1-acc1_cand)*100:+5.1f} | "
+                      f"mejor {best_acc*100:5.1f}% | ret {ret1_cand*100:5.1f}% | "
+                      f"{_bar(acc1_cand/args.threshold if args.threshold else 1.0)} {dt:.1f}s | {status}")
 
         if mastered:
-            log_phase("[TRAIN]", f"  nivel {level} DOMINADO: acierto {acc * 100:.1f}% "
+            log_phase("[TRAIN]", f"  nivel {level} DOMINADO: acierto T1 {acc1_cand * 100:.1f}% "
                        f"(>= {args.threshold * 100:.0f}% durante {args.patience} evals, "
                        f"{epoch} epochs).")
             break
@@ -397,7 +607,8 @@ def train_level(net: SuperTatetiNet, trainer: PuzzleTrainer, args, level: int,
             plateau_stopped = True
             break
 
-    return {"epochs": epoch, "best_acc": best_acc, "best_state": best_state,
+    return {"epochs": epoch, "best_acc": best_acc, "best_acc2": best_acc2,
+            "best_acc3": best_acc3, "best_state": best_state,
             "best_epoch": best_epoch, "mastered": mastered, "stopped": stopped,
             "capped": capped, "plateau_stopped": plateau_stopped}
 
@@ -438,15 +649,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="python -m trainPuzzles",
         description="Entrena SuperTatetiNet con puzzles de mate en N (currículo).")
-    p.add_argument("--init", default="model.pth", help=".pth de partida (si no existe, red aleatoria)")
-    p.add_argument("--out", default="trainPuzzles/checkpoints/puzzle_net.pth",
-                   help=".pth de salida (dentro de trainPuzzles/ por defecto)")
+    p.add_argument("--init", default="trainPuzzles/checkpoints/puzzle_canon.pth",
+                   help=".pth de partida (default: el canon, el último modelo terminado; "
+                        "si no existe, red aleatoria)")
+    p.add_argument("--out", default="trainPuzzles/checkpoints/puzzle_canon.pth",
+                   help=".pth de salida (default: el canon). Cada corrida además archiva su "
+                        "modelo/reporte en checkpoints/runs/NNNN_<run-name>/")
+    p.add_argument("--run-name", dest="run_name", default="puzzle",
+                   help="etiqueta de la corrida archivada en checkpoints/runs/ (default: puzzle)")
+    p.add_argument("--no-canon", dest="no_canon", action="store_true",
+                   help="no copiar el modelo final a checkpoints/puzzle_canon.pth "
+                        "(útil para experimentos A/B que no deben pisar la cadena)")
     p.add_argument("--report", default=None,
-                   help="reporte JSON (default: <out>_report.json, junto al modelo)")
+                   help="reporte JSON del canon (default: <out>_report.json, junto al modelo)")
     p.add_argument("--levels", type=int, default=4,
                    help="niveles iniciales pre-generados (1..N)")
+    p.add_argument("--start-level", dest="start_level", type=int, default=1,
+                   help="nivel donde arranca el currículo (default 1). Con >1 se salta el "
+                        "reentrenamiento de los niveles previos (p. ej. --start-level 2 arranca "
+                        "en mate-2 calentando desde --init); se generan igual sus sets de "
+                        "evaluación para medir retención")
     p.add_argument("--max-level", type=int, default=0,
                    help="nivel máximo a alcanzar; 0 = sin tope (sube de nivel indefinidamente)")
+    p.add_argument("--stop-at-level", dest="stop_at_level", type=int, default=0,
+                   help="termina el currículo tras procesar este nivel (dominado o no) y guarda "
+                        "el reporte; 0 = off. Sirve para que retrain_loop evalúe el dominio del "
+                        "nivel objetivo sin seguir a niveles superiores")
     p.add_argument("--min-level-puzzles", type=int, default=200,
                    help="mínimo de puzzles para considerar entrenable un nivel nuevo")
     p.add_argument("--threshold", type=float, default=0.95,
@@ -465,51 +693,71 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="corta el nivel y la corrida si pasan estos epochs sin mejorar el mejor "
                         "acierto (0 = off, entrena sin tope)")
     p.add_argument("--log-every", type=int, default=10,
-                   help="imprime la línea por epoch 1 de cada N epochs (<=0 = todas); "
-                        "los hitos (nuevo mejor, dominado, plateau, parada) se imprimen siempre")
+                    help="imprime la línea por epoch 1 de cada N epochs (<=0 = todas); "
+                         "los hitos (nuevo mejor, dominado, plateau, parada) se imprimen siempre")
+    p.add_argument("--eval-every", type=int, default=1,
+                    help="evalúa/selecciona mejor cada N epochs (default 1)")
     p.add_argument("--revision-epochs", type=int, default=6,
-                   help="epochs de revisión de niveles viejos tras dominar cada nivel (default 6)")
+                    help="epochs de revisión de niveles viejos tras dominar cada nivel (default 6)")
     p.add_argument("--revision-puzzles", type=int, default=500,
-                   help="puzzles por fase de revisión (repartidos entre los niveles viejos)")
+                    help="puzzles por fase de revisión (repartidos entre los niveles viejos)")
     p.add_argument("--big", type=float, default=0.20,
-                   help="cambio (en acierto) para 'mejoró/empeoró mucho' (default 0.20)")
+                    help="cambio (en acierto) para 'mejoró/empeoró mucho' (default 0.20)")
     p.add_argument("--small", type=float, default=0.05,
-                   help="cambio (en acierto) para 'mejoró/empeoró poco' (default 0.05)")
+                    help="cambio (en acierto) para 'mejoró/empeoró poco' (default 0.05)")
     p.add_argument("--puzzles-per-level", type=int, default=25000,
-                   help="puzzles de entrenamiento por nivel (con pocos la red los memoriza)")
+                    help="puzzles de entrenamiento por nivel (con pocos la red los memoriza)")
     p.add_argument("--eval-size", type=int, default=1000, help="puzzles del set de evaluación por nivel")
     p.add_argument("--no-augment", dest="no_augment", action="store_true",
-                   help="desactiva las simetrías D4 (por defecto cada muestra se rota/refleja al azar)")
+                    help="desactiva las simetrías D4 (por defecto cada muestra se rota/refleja al azar)")
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--lr-schedule", choices=["none", "cosine"], default="none",
+                    help="programa de LR (default none)")
+    p.add_argument("--lr-final-frac", type=float, default=0.03,
+                    help="eta_min = lr * lr-final-frac para cosine")
+    p.add_argument("--lr-decay-epochs", type=int, default=0,
+                    help="T_max para cosine; 0 = usar max-epochs o 3000")
+    p.add_argument("--tta", action="store_true", help="usar TTA (8 simetrías) en evaluación")
     p.add_argument("--dropout", type=float, default=0.0,
-                   help="dropout funcional en las capas compartidas (0 = off; se aplica solo entrenando)")
+                    help="dropout funcional en las capas compartidas (0 = off; se aplica solo entrenando)")
     p.add_argument("--weight-decay", type=float, default=0.0,
-                   help="penalización L2 de Adam (weight decay; 0 = off)")
+                    help="penalización L2 de Adam (weight decay; 0 = off)")
     p.add_argument("--value-coef", type=float, default=0.0,
-                   help="peso de la pérdida de valor (0 = off: todos los puzzles son ganados, aprendería una constante)")
+                    help="peso de la pérdida de valor (0 = off: todos los puzzles son ganados, aprendería una constante)")
     p.add_argument("--replay-frac", type=float, default=0.30,
-                   help="fracción de puzzles de niveles previos en cada nivel")
+                    help="fracción de puzzles de niveles previos en cada nivel")
     p.add_argument("--min-turn", type=int, default=16,
-                   help="solo se resuelven posiciones con turno >= este valor")
+                    help="solo se resuelven posiciones con turno >= este valor")
     p.add_argument("--solver-max-nodes", type=int, default=120000,
-                   help="presupuesto de nodos del solver por posición (0 = sin límite)")
+                    help="presupuesto de nodos del solver por posición (0 = sin límite)")
     p.add_argument("--games-budget", type=int, default=0,
-                   help="tope duro de partidas aleatorias por generación; 0 = sin tope "
-                        "(junta el target usando --max-games como seguridad)")
+                    help="tope duro de partidas aleatorias por generación; 0 = sin tope "
+                         "(junta el target usando --max-games como seguridad)")
     p.add_argument("--max-games", type=int, default=200000,
-                   help="tope de seguridad de partidas cuando --games-budget=0")
+                    help="tope de seguridad de partidas cuando --games-budget=0")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--eval-seed", type=int, default=None,
-                   help="semilla del set de evaluación (default: = --seed); fijala para comparar "
-                        "entre reintentos con datos de train distintos")
+                    help="semilla del set de evaluación (default: = --seed); fijala para comparar "
+                         "entre reintentos con datos de train distintos")
+    p.add_argument("--hard-mining", action="store_true", help="activar hard-example mining")
+    p.add_argument("--mine-every", type=int, default=10)
+    p.add_argument("--mine-boost", type=float, default=3.0)
+    p.add_argument("--mine-warmup", type=int, default=25)
+    p.add_argument("--ema", action="store_true", help="activar EMA de pesos")
+    p.add_argument("--ema-decay", type=float, default=0.999)
+    p.add_argument("--rank-coef", type=float, default=0.0, help="coeficiente de ranking loss")
+    p.add_argument("--rank-margin", type=float, default=1.0, help="margen de ranking loss")
     return p.parse_args(argv)
 
 
-def _log_config(args, init: Path, out: Path) -> None:
+def _log_config(args, init: Path, out: Path, run_dir: Path, canon_pth: Path) -> None:
     ret_threshold = args.threshold if args.retention_threshold is None else args.retention_threshold
     log_phase("[INFO]", "Configuración:")
-    log_phase("[INFO]", f"  init={init}  out={out}  niveles iniciales={args.levels}  "
+    log_phase("[INFO]", f"  init={init}  out={out}  corrida={run_dir}  "
+              f"canon={'off' if getattr(args, 'no_canon', False) else canon_pth}  "
+              f"niveles iniciales={args.levels}  "
+              f"nivel inicial={getattr(args, 'start_level', 1)}  "
               f"max-level={'sin tope' if not args.max_level else args.max_level}")
     log_phase("[INFO]", f"  umbral={args.threshold * 100:.0f}%  retención={ret_threshold * 100:.0f}%"
               f"  patience={args.patience}  min-epochs={args.min_epochs}  "
@@ -517,11 +765,12 @@ def _log_config(args, init: Path, out: Path) -> None:
               f"plateau-stop={'off' if not args.plateau_stop else args.plateau_stop}  "
               f"log-every={args.log_every}")
     log_phase("[INFO]", f"  entrada={canon.INPUT_ENCODING} (perspectiva de quien mueve)  "
-              f"simetrías D4={'no' if getattr(args, 'no_augment', False) else 'sí'}  value-coef={args.value_coef}")
+               f"simetrías D4={'no' if getattr(args, 'no_augment', False) else 'sí'}  value-coef={args.value_coef}")
     log_phase("[INFO]", f"  puzzles/nivel={args.puzzles_per_level}  eval/nivel={args.eval_size}  "
-              f"batch={args.batch_size}  lr={args.lr}  dropout={args.dropout}  "
-              f"weight-decay={args.weight_decay}  replay={args.replay_frac}  "
-              f"revisión={args.revision_epochs}ep/{args.revision_puzzles}puz")
+               f"batch={args.batch_size}  lr={args.lr} ({getattr(args,'lr_schedule','none')}) dropout={args.dropout}  "
+               f"weight-decay={args.weight_decay}  replay={args.replay_frac}  "
+               f"revisión={args.revision_epochs}ep/{args.revision_puzzles}puz  tta={getattr(args,'tta',False)}  "
+               f"hard={getattr(args,'hard_mining',False)} ema={getattr(args,'ema',False)} rank={getattr(args,'rank_coef',0.0)}")
     log_phase("[INFO]", f"  generación: games-budget={'sin tope' if args.games_budget <= 0 else args.games_budget}"
               f"  max-games={args.max_games}  min-turn={args.min_turn}  "
               f"solver-max-nodes={'sin límite' if not args.solver_max_nodes else args.solver_max_nodes}  "
@@ -539,10 +788,16 @@ def run(args) -> int:
 
     out = Path(args.out)
     init = Path(args.init)
-    report_path = Path(args.report) if args.report else out.with_name(f"{out.stem}_report.json")
+    canon_pth, canon_report = layout.canon_paths(out)
+    run_dir = layout.next_run_dir(out, args.run_name)
+    run_pth, run_report, levels_dir = layout.run_paths(run_dir, args.run_name)
+    no_canon = getattr(args, "no_canon", False)
+    report_path = Path(args.report) if args.report else canon_report
     ret_threshold = args.threshold if args.retention_threshold is None else args.retention_threshold
 
-    _log_config(args, init, out)
+    start_level, args.levels = scheduled_levels(args)
+
+    _log_config(args, init, out, run_dir, canon_pth)
 
     exclude: set = set()
     eval_sets, train_sets = build_sets(args)
@@ -551,14 +806,21 @@ def run(args) -> int:
     initial_state = clone_state(net)
     baseline_net = SuperTatetiNet()
     baseline_net.load_state_dict(initial_state)
-    baselines = {n: accuracy(baseline_net, eval_sets.get(n, []))
+    baselines = {n: accuracy(baseline_net, eval_sets.get(n, []), tta=getattr(args, 'tta', False))
                  for n in range(1, args.levels + 1)}
     log_phase("[INFO]", "Baseline (red inicial) por nivel: " +
               ", ".join(f"mate {n}: {baselines[n] * 100:.1f}%" for n in baselines))
 
     trainer = PuzzleTrainer(net, lr=args.lr, value_coef=args.value_coef, seed=args.seed,
                             augment=not getattr(args, "no_augment", False),
-                            weight_decay=args.weight_decay)
+                            weight_decay=args.weight_decay,
+                            lr_schedule=getattr(args, 'lr_schedule', 'none'),
+                            lr_final_frac=getattr(args, 'lr_final_frac', 0.03),
+                            lr_decay_epochs=getattr(args, 'lr_decay_epochs', 0),
+                            max_epochs=args.max_epochs,
+                            ema_decay=getattr(args, 'ema_decay', 0.0),
+                            rank_coef=getattr(args, 'rank_coef', 0.0),
+                            rank_margin=getattr(args, 'rank_margin', 1.0))
     rng = random.Random(args.seed)
 
     replay: list[Puzzle] = []
@@ -566,13 +828,32 @@ def run(args) -> int:
     summaries: list[dict] = []
     learned: list[int] = []
 
-    level = 1
+    level = start_level
     revision_only = False
 
     def write_incremental():
-        report = build_report(args, init, out, report_path, summaries, ret_threshold)
+        report = build_report(args, init, out, report_path, summaries, ret_threshold,
+                              run_dir=run_dir)
         write_report(report, report_path, announce=False)
+        write_report(report, run_report, announce=False)
         return report
+
+    def save_final() -> None:
+        """Guarda el modelo final en `--out`, la carpeta de la corrida y el canon.
+
+        Con `--no-canon` el canon no se pisa, aunque `--out` apunte a él.
+        """
+        dests = [out, run_pth]
+        if no_canon:
+            dests = [d for d in dests if d != canon_pth]
+        else:
+            dests.append(canon_pth)
+        saved: list[Path] = []
+        for dest in dests:
+            if dest in saved:
+                continue
+            save_net(net, dest)
+            saved.append(dest)
 
     while not _STOP.is_set():
         # 1) Asegurar que existan los sets del nivel (generación on-demand).
@@ -593,7 +874,7 @@ def run(args) -> int:
                 else:
                     eval_sets[level] = ev
                     train_sets[level] = tr
-                    baselines[level] = accuracy(baseline_net, ev)
+                    baselines[level] = accuracy(baseline_net, ev, tta=getattr(args, 'tta', False))
 
         # 2) Modo revisión (o parada): repite fases de revisión hasta que lo pares.
         if revision_only or _STOP.is_set():
@@ -630,15 +911,20 @@ def run(args) -> int:
 
         if res["best_state"] is not None:
             net.load_state_dict(res["best_state"])
-        final_acc = accuracy(net, evalset)
+        final_tk = topk_accuracy(net, evalset, ks=(1, 2, 3), tta=getattr(args, 'tta', False))
+        final_acc = final_tk.get(1, 0.0)
         summaries.append({"level": level, "baseline": base, "final": final_acc,
                           "delta": final_acc - base, "epochs": res["epochs"],
                           "mastered": res["mastered"], "reached": True,
-                          "best": res["best_acc"], "best_epoch": res["best_epoch"]})
+                          "best": res["best_acc"], "best_epoch": res["best_epoch"],
+                          "best_top2": res.get("best_acc2"), "best_top3": res.get("best_acc3"),
+                          "final_top2": final_tk.get(2), "final_top3": final_tk.get(3)})
         learned.append(level)
         replay.extend(current)
         replay_by_level.setdefault(level, []).extend(current)
-        save_net(net, out.with_name(f"{out.stem}_level{level}_best{out.suffix}"))
+        save_net(net, levels_dir / f"level{level}_best.pth")
+        if not no_canon:
+            save_net(net, canon_pth)          # canon reanudable aunque se corte acá
         write_incremental()
         dom = "dominado" if res["mastered"] else "no dominado"
         log_phase("[INFO]", f"resumen parcial: mate {level} -> {final_acc * 100:.1f}% "
@@ -655,14 +941,20 @@ def run(args) -> int:
                 log_phase("[INFO]", "estancamiento (--plateau-stop): se detiene el currículo "
                           "para reintentar con más datos.")
             break
+        if args.stop_at_level and level >= args.stop_at_level:
+            log_phase("[TRAIN]", f"nivel {level} finalizado; --stop-at-level {args.stop_at_level}"
+                                 f" alcanzado: se detiene el currículo.")
+            break
         if not _STOP.is_set():
             log_phase("[TRAIN]", f"nivel {level} finalizado; se continúa con el nivel {level + 1}.")
         level += 1
 
-    save_net(net, out)
-    report = build_report(args, init, out, report_path, summaries, ret_threshold)
+    save_final()
+    report = build_report(args, init, out, report_path, summaries, ret_threshold,
+                          run_dir=run_dir)
     print_report(report)
     write_report(report, report_path, announce=True)
+    write_report(report, run_report, announce=False)
     if _STOP.is_set():
         log_phase("[INFO]", "entrenamiento detenido por el usuario. Resumen y reporte guardados.")
     return 0
@@ -672,7 +964,8 @@ def run(args) -> int:
 # Reporte
 # ----------------------------------------------------------------------
 def build_report(args, init: Path, out: Path, report_path: Path,
-                 summaries: list[dict], ret_threshold: float) -> dict:
+                 summaries: list[dict], ret_threshold: float,
+                 run_dir: Path | None = None) -> dict:
     reached = [s for s in summaries if s.get("reached")]
     deltas = [s["delta"] for s in reached if s["delta"] == s["delta"]]
     avg = float(sum(deltas) / len(deltas)) if deltas else float("nan")
@@ -685,7 +978,10 @@ def build_report(args, init: Path, out: Path, report_path: Path,
         "init": str(init),
         "out": str(out),
         "report": str(report_path),
+        "run_dir": None if run_dir is None else str(run_dir),
+        "run_name": getattr(args, "run_name", None),
         "levels_requested": args.levels,
+        "start_level": getattr(args, "start_level", 1),
         "max_level": args.max_level,
         "threshold": args.threshold,
         "retention_threshold": ret_threshold,
@@ -714,6 +1010,11 @@ def print_report(report: dict) -> None:
         dominio = "sí" if s["mastered"] else ("no" if s.get("reached") else "no entrenado")
         log_print(f"  {s['level']:>5}  {base:>7}  {final:>7}  {delta:>7}  "
                   f"{s['epochs']:>6}  {dominio:>7}  {s['verdict']}")
+        if s.get("final_top2") is not None:
+            log_print(f"  {'':>5}  top-2 {s['final_top2'] * 100:5.1f}%  "
+                      f"top-3 {s['final_top3'] * 100:5.1f}%  (mejor T2 "
+                      f"{(s.get('best_top2') or 0) * 100:5.1f}%  T3 "
+                      f"{(s.get('best_top3') or 0) * 100:5.1f}%)")
     avg = report["avg_delta"]
     avg_txt = "s/d" if avg != avg else f"{avg * 100:+.1f} pts"
     log_print("-" * 60)
