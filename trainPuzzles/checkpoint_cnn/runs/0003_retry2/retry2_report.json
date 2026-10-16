@@ -1,0 +1,22 @@
+{
+  "input_encoding": "canonical",
+  "init": "trainPuzzles/checkpoint_cnn/puzzle_canon.pth",
+  "out": "trainPuzzles/checkpoint_cnn/puzzle_canon.pth",
+  "report": "trainPuzzles/checkpoint_cnn/puzzle_canon_report.json",
+  "run_dir": "trainPuzzles/checkpoint_cnn/runs/0003_retry2",
+  "run_name": "retry2",
+  "levels_requested": 1,
+  "start_level": 1,
+  "max_level": 3,
+  "threshold": 0.9,
+  "retention_threshold": 0.9,
+  "patience": 2,
+  "min_epochs": 15,
+  "big": 0.2,
+  "small": 0.05,
+  "levels": [],
+  "avg_delta": NaN,
+  "verdict": "sin datos",
+  "levels_reached": 0,
+  "levels_mastered": 0
+}
