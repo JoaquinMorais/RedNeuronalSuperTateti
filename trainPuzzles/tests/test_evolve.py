@@ -9,10 +9,15 @@ from model import SuperTatetiNet
 from trainPuzzles import evo_config as C
 from trainPuzzles import evolve_puzzles as E
 from trainPuzzles import train as T
+from trainPuzzles.model_cnn import SuperTatetiCNN
 
 
 def _net_sd():
     return SuperTatetiNet().state_dict()
+
+
+def _cnn_sd():
+    return SuperTatetiCNN().state_dict()
 
 
 class _P:
@@ -34,6 +39,20 @@ def test_config_defaults_y_policy():
     assert (cfg.population, cfg.survivors, cfg.children) == (30, 10, 20)
     assert C.policy_tuple(cfg) == (2,) * 10
     C.validate(cfg)                                            # no lanza
+
+
+def test_config_arch_valida_y_roundtrip():
+    assert C.EvoConfig().arch == "mlp"
+    with pytest.raises(ValueError):
+        C.validate(C.EvoConfig(arch="rnn"))
+    cfg = C.EvoConfig(arch="cnn")
+    back = C.from_dict(cfg.snapshot())
+    assert back.arch == "cnn" and back.out is None
+
+
+def test_parse_args_arch_cnn():
+    cfg = E.parse_args(["--arch", "cnn"])
+    assert cfg.arch == "cnn" and cfg.out is None
 
 
 def test_config_valida_invariantes():
@@ -86,6 +105,41 @@ def test_normalize_state_dict_deja_normales_y_reescala_explosivos():
     assert changed2 is True
     assert torch.isfinite(out2["shared.0.weight"]).all()
     assert float(out2["shared.0.weight"].std()) < 1.0          # volvió a escala razonable
+
+
+def test_normalize_state_dict_cnn_no_crashea_y_reescala():
+    sd = _cnn_sd()
+    out, changed = E.normalize_state_dict(sd, threshold=4.0, arch="cnn")
+    assert changed is False and out is sd
+
+    huge = {k: v.clone() for k, v in sd.items()}
+    huge["conv1.weight"] = huge["conv1.weight"] * 1e4
+    out2, changed2 = E.normalize_state_dict(huge, threshold=4.0, arch="cnn")
+    assert changed2 is True
+    assert torch.isfinite(out2["conv1.weight"]).all()
+    assert float(out2["conv1.weight"].std()) < 1.0
+
+
+def test_mutate_state_dict_cnn_conserva_formas_y_padre():
+    parent = _cnn_sd()
+    before = {k: v.clone() for k, v in parent.items()}
+    child = E.mutate_state_dict(parent, C.MutationLevel(rate=1.0, sigma=0.5), seed=1,
+                                norm_threshold=4.0, arch="cnn")
+    assert set(child) == set(parent)
+    assert all(child[k].shape == before[k].shape for k in parent)
+    assert all(torch.equal(parent[k], before[k]) for k in parent)     # padre intacto
+    # la cabeza de valor del CNN (value_fc1/value_fc2) no muta por defecto
+    assert torch.equal(child["value_fc1.weight"], before["value_fc1.weight"])
+    assert torch.equal(child["value_fc2.bias"], before["value_fc2.bias"])
+    assert any(not torch.equal(child[k], before[k]) for k in parent if not k.startswith("value"))
+
+
+def test_initial_population_cnn_completa_sin_crashear():
+    cfg = C.EvoConfig(population=4, survivors=2, arch="cnn")
+    sd = _cnn_sd()
+    pop = E.initial_population(cfg, sd, random.Random(0))
+    assert len(pop) == 4
+    assert all(set(ind.sd) == set(sd) for ind in pop)
 
 
 def test_pick_level_respeta_probabilidades():

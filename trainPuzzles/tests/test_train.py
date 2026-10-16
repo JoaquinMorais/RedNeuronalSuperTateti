@@ -122,6 +122,39 @@ def test_scheduled_levels_normaliza_start_y_levels():
     assert T.scheduled_levels(T.parse_args(["--start-level", "3", "--levels", "1"])) == (3, 3)
 
 
+def test_parse_args_acepta_device():
+    assert T.parse_args([]).device == "auto"
+    assert T.parse_args(["--device", "cpu"]).device == "cpu"
+    assert T.parse_args(["--device", "cuda"]).device == "cuda"
+
+
+def test_resolve_device_cpu_auto_y_cuda():
+    assert T.resolve_device("cpu").type == "cpu"
+    auto = T.resolve_device("auto")
+    if torch.cuda.is_available():
+        assert auto.type == "cuda"
+        assert T.resolve_device("cuda").type == "cuda"
+    else:
+        assert auto.type == "cpu"
+        # pedir cuda sin CUDA debe fallar explícitamente
+        try:
+            T.resolve_device("cuda")
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("resolve_device('cuda') debía abortar sin CUDA")
+
+
+def test_to_device_sigue_el_device_global():
+    original = T._DEVICE
+    try:
+        T._DEVICE = torch.device("cpu")
+        t = torch.zeros(2)
+        assert T.to_device(t).device.type == "cpu"
+    finally:
+        T._DEVICE = original
+
+
 def test_build_report_incluye_start_level(tmp_path):
     args = T.parse_args(["--start-level", "2"])
     report = T.build_report(args, tmp_path / "in.pth", tmp_path / "out.pth",
@@ -431,3 +464,15 @@ def test_layout_canon_deriva_del_directorio_de_out(tmp_path):
     canon_pth, canon_report = L.canon_paths(tmp_path / "sub" / "algo.pth")
     assert canon_pth == tmp_path / "sub" / L.CANON_PTH
     assert canon_report == tmp_path / "sub" / L.CANON_REPORT
+
+
+def test_layout_default_canon_por_arquitectura():
+    assert L.default_canon("mlp") == T.Path("trainPuzzles/checkpoints_mts") / L.CANON_PTH
+    assert L.default_canon("cnn") == T.Path("trainPuzzles/checkpoint_cnn") / L.CANON_PTH
+    assert L.default_canon() == L.default_canon("mlp")
+
+
+def test_parse_args_arch_cnn_apunta_a_checkpoint_cnn():
+    args = T.parse_args(["--arch", "cnn"])
+    assert T.Path(args.out) == L.default_canon("cnn")
+    assert T.Path(args.init) == L.default_canon("cnn")

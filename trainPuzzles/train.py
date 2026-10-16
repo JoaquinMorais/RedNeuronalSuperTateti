@@ -22,9 +22,10 @@ Flujo:
      reporte JSON junto al modelo (también de forma incremental).
 
 Los checkpoints se ordenan así (ver `layout.py`): cada corrida archiva sus artefactos
-en `checkpoints/runs/NNNN_<tag>/` (modelo final, reporte y `levels/levelN_best.pth`) y
-el modelo final se copia siempre a `checkpoints/puzzle_canon.pth`, que es el punto de
-partida por defecto (`--init`) para reanudar el próximo entrenamiento.
+en `<dir>/runs/NNNN_<tag>/` (modelo final, reporte y `levels/levelN_best.pth`) y el
+modelo final se copia siempre a `<dir>/puzzle_canon.pth`, que es el punto de partida
+por defecto (`--init`) para reanudar el próximo entrenamiento. `<dir>` depende de
+`--arch`: `trainPuzzles/checkpoints_mts` (mlp) o `trainPuzzles/checkpoint_cnn` (cnn).
 
 El modelo se guarda como `state_dict` plano, compatible con `play.py` y
 `evolution.modelstore`. No importa ni modifica `mcts.py`, `trainer.py` ni `evolution/`.
@@ -47,7 +48,22 @@ import torch.optim as optim
 from model import SuperTatetiNet
 
 from . import canon, layout
+from .model_cnn import SuperTatetiCNN
 from .puzzles import Puzzle, harvest
+
+
+def build_net(arch: str, dropout: float = 0.0):
+    """Factory de arquitecturas: 'mlp' (SuperTatetiNet) o 'cnn' (SuperTatetiCNN).
+
+    Ambas comparten la firma ``forward(x, valid_moves_mask) -> (policy(81), value(1))``
+    y un ``state_dict`` estándar. OJO: los checkpoints de una NO son compatibles con la
+    otra (formas distintas), así que ``--init`` debe ser de la misma arquitectura.
+    """
+    if arch == "cnn":
+        return SuperTatetiCNN(dropout=dropout)
+    if arch == "mlp":
+        return SuperTatetiNet(dropout=dropout)
+    raise ValueError(f"arquitectura desconocida: {arch!r} (usar 'mlp' o 'cnn')")
 
 
 # ----------------------------------------------------------------------
@@ -201,9 +217,9 @@ class PuzzleTrainer:
             targets_np = np.stack([policy_target(puzzles[j].best_moves) for j in idxs])
             if self.augment:
                 states_np, masks_np, targets_np = canon.augment(states_np, masks_np, targets_np, self.np_rng)
-            states = torch.from_numpy(states_np)
-            masks = torch.from_numpy(masks_np)
-            targets = torch.from_numpy(targets_np)
+            states = torch.from_numpy(states_np).to(_DEVICE)
+            masks = torch.from_numpy(masks_np).to(_DEVICE)
+            targets = torch.from_numpy(targets_np).to(_DEVICE)
 
             pred_policy, pred_value = self.net(states, masks)
             logp = torch.log(pred_policy + 1e-8)
@@ -215,7 +231,7 @@ class PuzzleTrainer:
                 masked_logp = logp.masked_fill(masks == 0, -1e9)
                 best = masked_logp.masked_fill(~opt, -1e9).max(dim=1).values
                 decoy = masked_logp.masked_fill(opt, -1e9).max(dim=1).values
-                rank = torch.clamp(self.rank_margin + decoy - best, min=0.0).mean()
+                rank = nn.functional.softplus(self.rank_margin + decoy - best).mean()
                 loss = loss + self.rank_coef * rank
 
             self.optimizer.zero_grad()
@@ -271,7 +287,7 @@ def topk_accuracy(net: SuperTatetiNet, puzzles: list[Puzzle], ks=(1, 2, 3), tta:
             zeros_t = np.zeros((B, 81), dtype=np.float32)
             for ksym in range(len(canon.SYM_MAPS)):
                 s_k, m_k, _ = canon.apply_sym(chunk_states, chunk_masks, zeros_t, ksym)
-                pol_k, _ = net(torch.from_numpy(s_k), torch.from_numpy(m_k))
+                pol_k, _ = net(to_device(torch.from_numpy(s_k)), to_device(torch.from_numpy(m_k)))
                 pol_k_np = pol_k.detach().cpu().numpy().astype(np.float32)
                 p_back = np.zeros_like(pol_k_np)
                 inv = canon.IDX81[ksym]
@@ -279,7 +295,7 @@ def topk_accuracy(net: SuperTatetiNet, puzzles: list[Puzzle], ks=(1, 2, 3), tta:
                 p_accum += p_back
             policy_np = p_accum / float(len(canon.SYM_MAPS))
         else:
-            pol, _ = net(torch.from_numpy(chunk_states), torch.from_numpy(chunk_masks))
+            pol, _ = net(to_device(torch.from_numpy(chunk_states)), to_device(torch.from_numpy(chunk_masks)))
             policy_np = pol.detach().cpu().numpy().astype(np.float32)
         for j in range(B):
             msk = chunk_masks[j]
@@ -317,7 +333,7 @@ def per_sample_correct(net: SuperTatetiNet, puzzles: list[Puzzle], tta: bool = F
             zeros_t = np.zeros((B, 81), dtype=np.float32)
             for ksym in range(len(canon.SYM_MAPS)):
                 s_k, m_k, _ = canon.apply_sym(chunk_states, chunk_masks, zeros_t, ksym)
-                pol_k, _ = net(torch.from_numpy(s_k), torch.from_numpy(m_k))
+                pol_k, _ = net(to_device(torch.from_numpy(s_k)), to_device(torch.from_numpy(m_k)))
                 pol_k_np = pol_k.detach().cpu().numpy().astype(np.float32)
                 p_back = np.zeros_like(pol_k_np)
                 inv = canon.IDX81[ksym]
@@ -325,7 +341,7 @@ def per_sample_correct(net: SuperTatetiNet, puzzles: list[Puzzle], tta: bool = F
                 p_accum += p_back
             policy_np = p_accum / float(len(canon.SYM_MAPS))
         else:
-            pol, _ = net(torch.from_numpy(chunk_states), torch.from_numpy(chunk_masks))
+            pol, _ = net(to_device(torch.from_numpy(chunk_states)), to_device(torch.from_numpy(chunk_masks)))
             policy_np = pol.detach().cpu().numpy().astype(np.float32)
         for j in range(B):
             msk = chunk_masks[j]
@@ -440,15 +456,53 @@ def generate_train_set(n: int, args, exclude: set) -> list[Puzzle]:
     return ps
 
 
-def load_net(init_path: Path, dropout: float = 0.0) -> SuperTatetiNet:
-    net = SuperTatetiNet(dropout=dropout)
+def load_net(init_path: Path, dropout: float = 0.0, arch: str = "mlp") -> SuperTatetiNet:
+    net = build_net(arch, dropout=dropout)
     if init_path.exists():
         state = torch.load(init_path, weights_only=True, map_location="cpu")
-        net.load_state_dict(state)
-        log_print(f"Red inicializada desde {init_path}")
+        try:
+            net.load_state_dict(state)
+            log_print(f"Red inicializada desde {init_path}")
+        except RuntimeError as exc:
+            log_print(f"!! No se pudo inicializar {arch} desde {init_path} "
+                      f"(arquitectura incompatible): se entrena desde una red aleatoria")
+            log_print(f"   detalle: {exc}")
     else:
         log_print(f"No existe {init_path}: se entrena desde una red aleatoria")
     return net
+
+
+# ----------------------------------------------------------------------
+# Dispositivo (CPU/GPU)
+# ----------------------------------------------------------------------
+# Device global del proceso: hay una sola red y un solo hilo de entrenamiento,
+# así que centralizarlo evita enhebrar `device` por cada firma. Se resuelve en
+# `run()` a partir de `--device`. En Linux se usa CPU (auto sin CUDA -> cpu);
+# en Windows con Docker+GPU se pasa `--device cuda`.
+_DEVICE = torch.device("cpu")
+
+
+def resolve_device(name: str = "auto") -> torch.device:
+    """Resuelve 'auto' | 'cpu' | 'cuda' a un ``torch.device``.
+
+    ``auto`` usa CUDA si está disponible (imagen GPU) y CPU en caso contrario.
+    """
+    name = (name or "auto").lower()
+    if name == "cpu":
+        return torch.device("cpu")
+    if name == "cuda":
+        if not torch.cuda.is_available():
+            raise SystemExit(
+                "--device cuda pedido pero CUDA no está disponible. "
+                "Construí la imagen GPU (docker-compose.gpu.yml) y pasá la GPU al contenedor."
+            )
+        return torch.device("cuda")
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def to_device(x):
+    """Mueve un tensor al device de entrenamiento (no-op si ya está en él)."""
+    return x.to(_DEVICE)
 
 
 def scheduled_levels(args) -> tuple[int, int]:
@@ -649,16 +703,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="python -m trainPuzzles",
         description="Entrena SuperTatetiNet con puzzles de mate en N (currículo).")
-    p.add_argument("--init", default="trainPuzzles/checkpoints/puzzle_canon.pth",
-                   help=".pth de partida (default: el canon, el último modelo terminado; "
-                        "si no existe, red aleatoria)")
-    p.add_argument("--out", default="trainPuzzles/checkpoints/puzzle_canon.pth",
-                   help=".pth de salida (default: el canon). Cada corrida además archiva su "
-                        "modelo/reporte en checkpoints/runs/NNNN_<run-name>/")
+    p.add_argument("--init", default=None,
+                   help=".pth de partida (default: el canon de la arquitectura --arch, el "
+                        "último modelo terminado; si no existe, red aleatoria)")
+    p.add_argument("--out", default=None,
+                   help=".pth de salida (default: el canon de la arquitectura --arch). Cada "
+                        "corrida además archiva su modelo/reporte en <dir>/runs/NNNN_<run-name>/")
     p.add_argument("--run-name", dest="run_name", default="puzzle",
-                   help="etiqueta de la corrida archivada en checkpoints/runs/ (default: puzzle)")
+                   help="etiqueta de la corrida archivada en <dir>/runs/ (default: puzzle)")
     p.add_argument("--no-canon", dest="no_canon", action="store_true",
-                   help="no copiar el modelo final a checkpoints/puzzle_canon.pth "
+                   help="no copiar el modelo final a <dir>/puzzle_canon.pth "
                         "(útil para experimentos A/B que no deben pisar la cadena)")
     p.add_argument("--report", default=None,
                    help="reporte JSON del canon (default: <out>_report.json, junto al modelo)")
@@ -719,6 +773,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--lr-decay-epochs", type=int, default=0,
                     help="T_max para cosine; 0 = usar max-epochs o 3000")
     p.add_argument("--tta", action="store_true", help="usar TTA (8 simetrías) en evaluación")
+    p.add_argument("--arch", choices=("mlp", "cnn"), default="mlp",
+                    help="arquitectura: 'mlp' (SuperTatetiNet, checkpoints_mts) o "
+                         "'cnn' (SuperTatetiCNN, checkpoint_cnn). Define el directorio "
+                         "por defecto de --init/--out")
+    p.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
+                    help="dispositivo de cómputo: 'auto' usa CUDA si está disponible (default)")
     p.add_argument("--dropout", type=float, default=0.0,
                     help="dropout funcional en las capas compartidas (0 = off; se aplica solo entrenando)")
     p.add_argument("--weight-decay", type=float, default=0.0,
@@ -748,13 +808,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--ema-decay", type=float, default=0.999)
     p.add_argument("--rank-coef", type=float, default=0.0, help="coeficiente de ranking loss")
     p.add_argument("--rank-margin", type=float, default=1.0, help="margen de ranking loss")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    arch = getattr(args, "arch", "mlp")
+    if args.init is None:
+        args.init = str(layout.default_canon(arch))
+    if args.out is None:
+        args.out = str(layout.default_canon(arch))
+    return args
 
 
 def _log_config(args, init: Path, out: Path, run_dir: Path, canon_pth: Path) -> None:
     ret_threshold = args.threshold if args.retention_threshold is None else args.retention_threshold
     log_phase("[INFO]", "Configuración:")
-    log_phase("[INFO]", f"  init={init}  out={out}  corrida={run_dir}  "
+    log_phase("[INFO]", f"  arch={getattr(args, 'arch', 'mlp')}  init={init}  out={out}  corrida={run_dir}  "
               f"canon={'off' if getattr(args, 'no_canon', False) else canon_pth}  "
               f"niveles iniciales={args.levels}  "
               f"nivel inicial={getattr(args, 'start_level', 1)}  "
@@ -797,15 +863,23 @@ def run(args) -> int:
 
     start_level, args.levels = scheduled_levels(args)
 
+    global _DEVICE
+    _DEVICE = resolve_device(getattr(args, "device", "auto"))
+    log_print(f"Dispositivo de cómputo: {_DEVICE}"
+              + (f" ({torch.cuda.get_device_name(0)})" if _DEVICE.type == "cuda" else ""))
+
     _log_config(args, init, out, run_dir, canon_pth)
 
     exclude: set = set()
     eval_sets, train_sets = build_sets(args)
-    net = load_net(init, dropout=args.dropout)
+    arch = getattr(args, "arch", "mlp")
+    net = load_net(init, dropout=args.dropout, arch=arch)
+    net.to(_DEVICE)
 
     initial_state = clone_state(net)
-    baseline_net = SuperTatetiNet()
+    baseline_net = build_net(arch)
     baseline_net.load_state_dict(initial_state)
+    baseline_net.to(_DEVICE)
     baselines = {n: accuracy(baseline_net, eval_sets.get(n, []), tta=getattr(args, 'tta', False))
                  for n in range(1, args.levels + 1)}
     log_phase("[INFO]", "Baseline (red inicial) por nivel: " +

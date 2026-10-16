@@ -81,7 +81,7 @@ seguridad. Si el objetivo no se alcanza, el log avisa: `aviso: no se alcanzó el
 | `nivel 2: N epochs sin mejorar ... se corta por --plateau-stop N` | Se estancó y `--plateau-stop` cortó la corrida (para reintentar con más datos). |
 | `Baseline (red inicial) por nivel: mate 1: 93.1% ...` | Acierto de la red de partida en cada set de evaluación. |
 | `RESUMEN DEL APRENDIZAJE` (al final) | Tabla con `base`, `final`, `cambio`, `epochs`, `dominio` y una clasificación por nivel. |
-| `Reporte guardado en ...` | Se escribió el JSON con todo el resumen (por defecto `checkpoints/puzzle_canon_report.json`; también en `checkpoints/runs/NNNN_<run-name>/`). |
+| `Reporte guardado en ...` | Se escribió el JSON con todo el resumen (por defecto `<dir>/puzzle_canon_report.json`; también en `<dir>/runs/NNNN_<run-name>/`). |
 | `Modelo guardado en .../puzzle_canon.pth` | El modelo final se copió al canon (el último terminado); el próximo `--init` reanuda desde ahí. |
 
 ---
@@ -106,12 +106,12 @@ docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
     --levels 1 --max-level 3 --threshold 0.90 \
     --games-budget 0 --max-games 200000 \
     --dropout 0.2 --weight-decay 1e-4 \
-    --init trainPuzzles/checkpoints/puzzle_canon.pth \
+    --init trainPuzzles/checkpoints_mts/puzzle_canon.pth \
     --run-name m3
 ```
 
-(sin `--out`, el modelo final va al canon `checkpoints/puzzle_canon.pth` y se archiva en
-`checkpoints/runs/NNNN_m3/`)
+(sin `--out`, el modelo final va al canon `<dir>/puzzle_canon.pth` y se archiva en
+`<dir>/runs/NNNN_m3/`; `<dir>` es `checkpoints_mts/` para mlp y `checkpoint_cnn/` para cnn)
 
 ### 4.3 Corrida local (sin Docker)
 
@@ -122,7 +122,7 @@ python3 -m trainPuzzles \
   --levels 1 --max-level 3 --threshold 0.90 \
   --games-budget 0 --max-games 200000 \
   --dropout 0.2 --weight-decay 1e-4 \
-  --init trainPuzzles/checkpoints/puzzle_canon.pth \
+  --init trainPuzzles/checkpoints_mts/puzzle_canon.pth \
   --run-name m3
 ```
 
@@ -137,8 +137,8 @@ docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
   python -m trainPuzzles --levels 1 --max-level 2 --threshold 0.90 \
     --games-budget 0 --max-games 50000 --puzzles-per-level 10000 \
     --plateau-stop 1500 --seed 0 --eval-seed 0 --no-canon --run-name ab_control \
-    --init trainPuzzles/checkpoints/puzzle_canon.pth \
-    --out  trainPuzzles/checkpoints/ab_control.pth
+    --init trainPuzzles/checkpoints_mts/puzzle_canon.pth \
+    --out  trainPuzzles/checkpoints_mts/ab_control.pth
 
 # Tratamiento (dropout + weight decay)
 docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
@@ -147,19 +147,19 @@ docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
     --games-budget 0 --max-games 50000 --puzzles-per-level 10000 \
     --plateau-stop 1500 --seed 0 --eval-seed 0 --no-canon --run-name ab_dropout \
     --dropout 0.2 --weight-decay 1e-4 \
-    --init trainPuzzles/checkpoints/puzzle_canon.pth \
-    --out  trainPuzzles/checkpoints/ab_dropout.pth
+    --init trainPuzzles/checkpoints_mts/puzzle_canon.pth \
+    --out  trainPuzzles/checkpoints_mts/ab_dropout.pth
 ```
 
 (`--no-canon` evita pisar `puzzle_canon.pth`; los resultados quedan en
-`checkpoints/runs/`.)
+`<dir>/runs/`.)
 
 ### 4.5 Reintento automático con más datos (`retrain_loop.sh`)
 
 Repite el entrenamiento subiendo los puzzles cuando se estanca (`--max-epochs 3000` por ronda
 como tope duro, `--plateau-stop 1500` como corte anticipado), reanudando desde el canon
 (`puzzle_canon.pth`) que cada ronda actualiza. Cada ronda se archiva en
-`checkpoints/runs/NNNN_retryN/`.
+`<OUTDIR>/runs/NNNN_retryN/` (por defecto `OUTDIR` se deriva del `ARCH`).
 
 **En primer plano (ves todo en vivo):**
 
@@ -198,20 +198,26 @@ EMA=1 EMA_DECAY=0.999 RANK_COEF=0.5 RANK_MARGIN=1.0 \
 setsid bash trainPuzzles/retrain_loop.sh > /tmp/opencode/night.log 2>&1 < /dev/null &
 ```
 
-**Desde Windows (Docker Desktop + WSL):** usá la variante `retrain_loop_windows.sh`, que se
-ubica sola en la raíz del repo y verifica Docker/Python. Parado en la raíz del repo:
+**Desde Windows (PowerShell + Docker Desktop con GPU/WSL2):** usá la variante nativa
+`retrain_loop_windows.ps1` (ejecutable por Windows, sin WSL). Se ubica sola en la raíz del repo,
+construye la imagen GPU (torch `cu128`) y entrena SIEMPRE con GPU (`--device cuda`):
 
 ```powershell
-wsl bash trainPuzzles/retrain_loop_windows.sh
+powershell -ExecutionPolicy Bypass -File trainPuzzles/retrain_loop_windows.ps1
 # con parámetros:
-wsl bash -c "ROUNDS=2 bash trainPuzzles/retrain_loop_windows.sh"
-# guardando el log:
-wsl bash -c "ROUNDS=2 bash trainPuzzles/retrain_loop_windows.sh" > retrain.log 2>&1
+powershell -ExecutionPolicy Bypass -File trainPuzzles/retrain_loop_windows.ps1 -ROUNDS 2 -ARCH cnn
 ```
 
-> Debe tener finales de línea **LF**. El `.gitattributes` del repo lo garantiza en un clon
-> nuevo; si al correrlo ves `$'\r': command not found`, ejecutá
-> `sed -i 's/\r$//' trainPuzzles/retrain_loop_windows.sh`.
+Requisitos: Docker Desktop con backend WSL2 y GPU habilitada, y Docker Compose v2.30+ (soporte de
+`gpus`). Verificá la GPU con:
+
+```powershell
+docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
+```
+
+> En Linux se usa `retrain_loop.sh` con la imagen por defecto (CPU); `--device auto` resuelve a CPU
+> porque no hay CUDA disponible. La imagen GPU se arma con `docker-compose.gpu.yml`
+> (`-f docker-compose.yml -f docker-compose.gpu.yml`).
 
 ### 4.6 Ver el log y frenar
 
@@ -232,10 +238,10 @@ docker ps --filter ancestor=redneuronalsupertateti-trainer
 ### 4.7 Leer el resultado de una corrida
 
 El canon (`puzzle_canon_report.json`) siempre refleja la última corrida; cada corrida
-también deja su reporte en `checkpoints/runs/NNNN_<run-name>/`.
+también deja su reporte en `<dir>/runs/NNNN_<run-name>/`.
 
 ```bash
-python3 -c "import json; r=json.load(open('trainPuzzles/checkpoints/puzzle_canon_report.json')); \
+python3 -c "import json; r=json.load(open('trainPuzzles/checkpoints_mts/puzzle_canon_report.json')); \
 print([(l['level'], l['baseline'], l['final'], l['best'], l['mastered']) for l in r['levels']])"
 ```
 
@@ -247,9 +253,10 @@ print([(l['level'], l['baseline'], l['final'], l['best'], l['mastered']) for l i
 
 | Flag | Default | Qué hace |
 |---|---|---|
-| `--init` | `trainPuzzles/checkpoints/puzzle_canon.pth` | `.pth` de partida (el canon: el último modelo terminado). Si no existe, arranca de una red aleatoria. |
-| `--out` | `trainPuzzles/checkpoints/puzzle_canon.pth` | `.pth` de salida (por defecto el canon). También se archiva en `checkpoints/runs/NNNN_<run-name>/`. |
-| `--run-name` | `puzzle` | Etiqueta de la corrida archivada en `checkpoints/runs/`. |
+| `--arch` | `mlp` | Arquitectura: `mlp` (`SuperTatetiNet`, carpeta `checkpoints_mts/`) o `cnn` (`SuperTatetiCNN`, carpeta `checkpoint_cnn/`). Define el directorio por defecto de `--init`/`--out`. |
+| `--init` | canon del arch (`checkpoints_mts/puzzle_canon.pth` o `checkpoint_cnn/puzzle_canon.pth`) | `.pth` de partida (el canon: el último modelo terminado). Si no existe, arranca de una red aleatoria. |
+| `--out` | canon del arch | `.pth` de salida (por defecto el canon). También se archiva en `<dir>/runs/NNNN_<run-name>/`. |
+| `--run-name` | `puzzle` | Etiqueta de la corrida archivada en `<dir>/runs/`. |
 | `--no-canon` | off | No copiar el modelo final a `puzzle_canon.pth` (para experimentos que no deben pisar la cadena). |
 | `--report` | `<out>_report.json` | Reporte JSON del aprendizaje (por defecto `puzzle_canon_report.json`). |
 

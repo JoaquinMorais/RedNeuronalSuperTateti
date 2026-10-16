@@ -7,8 +7,8 @@
 # mismo examen, comparación justa), reanudando desde el canon (puzzle_canon.pth), que
 # cada ronda actualiza con el modelo que terminó de entrenar.
 #
-# Cada ronda se archiva en checkpoints/runs/NNNN_retryN/ y actualiza el canon; el
-# chequeo de 'mastered' lee siempre checkpoints/puzzle_canon_report.json.
+# Cada ronda se archiva en <OUTDIR>/runs/NNNN_retryN/ y actualiza el canon; el
+# chequeo de 'mastered' lee siempre <OUTDIR>/puzzle_canon_report.json.
 #
 # Uso:
 #   setsid bash trainPuzzles/retrain_loop.sh > /tmp/opencode/retrain.log 2>&1 < /dev/null &
@@ -22,10 +22,13 @@
 #   THRESHOLD=0.90  MAX_LEVEL=3
 #   START_LEVEL=1     (nivel donde arranca el currículo; >1 salta el reentrenamiento
 #                      de mate-1 y calienta directo en mate-2 desde CANON_INIT/canon)
+#   ARCH=mlp|cnn      (arquitectura a entrenar; default mlp. Con cnn, CANON_INIT debe
+#                      ser de CNN o inexistente: el warm-start MLP->CNN no es válido.
+#                      OUTDIR/CANON_INIT por defecto se derivan del arch)
 #   (la ronda usa --stop-at-level TARGET_LEVEL para terminar justo después del nivel
 #    objetivo y que el chequeo de dominio se ejecute)
-#   CANON_INIT=trainPuzzles/checkpoints/puzzle_canon.pth
-#   OUTDIR=trainPuzzles/checkpoints
+#   CANON_INIT=trainPuzzles/checkpoints_mts/puzzle_canon.pth   (default mlp)
+#   OUTDIR=trainPuzzles/checkpoints_mts                        (o checkpoint_cnn para cnn)
 set -euo pipefail
 
 TARGET_LEVEL="${TARGET_LEVEL:-2}"
@@ -42,8 +45,14 @@ WARM_START="${WARM_START:-1}"
 THRESHOLD="${THRESHOLD:-0.90}"
 MAX_LEVEL="${MAX_LEVEL:-3}"
 START_LEVEL="${START_LEVEL:-1}"
-CANON_INIT="${CANON_INIT:-trainPuzzles/checkpoints/puzzle_canon.pth}"
-OUTDIR="${OUTDIR:-trainPuzzles/checkpoints}"
+ARCH="${ARCH:-mlp}"
+if [ "$ARCH" = "cnn" ]; then
+  _default_outdir="trainPuzzles/checkpoint_cnn"
+else
+  _default_outdir="trainPuzzles/checkpoints_mts"
+fi
+OUTDIR="${OUTDIR:-$_default_outdir}"
+CANON_INIT="${CANON_INIT:-${OUTDIR}/puzzle_canon.pth}"
 
 canon_pth="${OUTDIR}/puzzle_canon.pth"
 report_host="${OUTDIR}/puzzle_canon_report.json"
@@ -57,7 +66,7 @@ while [ "$round" -le "$ROUNDS" ]; do
   run_name="retry${round}"
   maxg=$(( ppl * 5 ))
 
-  echo "==== Ronda ${round}/${ROUNDS} | puzzles/nivel=${ppl} | max-games=${maxg} | seed=${seed} | eval-seed=${EVAL_SEED} | start-level=${START_LEVEL} | init=${init} | run=${run_name} ===="
+  echo "==== Ronda ${round}/${ROUNDS} | arch=${ARCH} | puzzles/nivel=${ppl} | max-games=${maxg} | seed=${seed} | eval-seed=${EVAL_SEED} | start-level=${START_LEVEL} | init=${init} | run=${run_name} ===="
 
   LR_SCHEDULE="${LR_SCHEDULE:-none}"
   LR_FINAL_FRAC="${LR_FINAL_FRAC:-0.03}"
@@ -88,6 +97,7 @@ while [ "$round" -le "$ROUNDS" ]; do
   docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
     -v ./trainPuzzles:/app/trainPuzzles trainer \
     python -m trainPuzzles \
+      --arch "${ARCH}" \
       --levels 1 --max-level "${MAX_LEVEL}" --threshold "${THRESHOLD}" \
       --start-level "${START_LEVEL}" --stop-at-level "${TARGET_LEVEL}" \
       --games-budget 0 --max-games "${maxg}" \

@@ -22,12 +22,14 @@
 #models/*/
 #old_models/
 #training/
-#trainPuzzles/checkpoints/
+#trainPuzzles/checkpoints_mts/
+#trainPuzzles/checkpoint_cnn/
 
 # Pesos y sidecars de modelos (el seed se monta desde ./model.pth)
 #*.pth
 #trainPuzzles/*.json
-#trainPuzzles/checkpoints/*/
+#trainPuzzles/checkpoints_mts/*/
+#trainPuzzles/checkpoint_cnn/*/
 
 # Repos de referencia / borradores no usados por la imagen
 #models_statics/RiverPt/

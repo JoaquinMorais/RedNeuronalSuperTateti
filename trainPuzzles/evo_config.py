@@ -47,11 +47,12 @@ def children_per_rank(survivors: int, children: int) -> tuple[int, ...]:
 class EvoConfig:
     """Parámetros del ciclo evolutivo memético (gradiente + mutación + selección)."""
     # --- modelo y salida ---
+    arch: str = "mlp"                          # arquitectura: "mlp" o "cnn"
     seed_model: Path = Path("trainPuzzles/my_model.pth")
-    out: Path = Path("trainPuzzles/checkpoints/puzzle_canon.pth")  # canon: último terminado
+    out: Path | None = None                    # canon: None => <dir de arch>/puzzle_canon.pth
     out_test: Path | None = None              # checkpoint elegido por el test honesto (diagnóstico)
     report: Path | None = None
-    run_name: str = "evo"                     # etiqueta de la corrida archivada en checkpoints/runs/
+    run_name: str = "evo"                     # etiqueta de la corrida archivada en <dir>/runs/
     no_canon: bool = False                    # no copiar a puzzle_canon.pth (experimentos A/B)
 
     # --- población ---
@@ -95,8 +96,9 @@ class EvoConfig:
     def snapshot(self) -> dict:
         """Config serializable (para el reporte y para guardar/leer JSON)."""
         return {
+            "arch": self.arch,
             "seed_model": str(self.seed_model),
-            "out": str(self.out),
+            "out": None if self.out is None else str(self.out),
             "out_test": None if self.out_test is None else str(self.out_test),
             "report": None if self.report is None else str(self.report),
             "run_name": self.run_name,
@@ -169,6 +171,8 @@ def save_config(cfg: EvoConfig, path: Path) -> None:
 
 def validate(cfg: EvoConfig) -> None:
     """Valida los invariantes de la configuración (lanza ``ValueError``)."""
+    if cfg.arch not in ("mlp", "cnn"):
+        raise ValueError("arch debe ser 'mlp' o 'cnn'")
     if cfg.population < 2:
         raise ValueError("population debe ser >= 2")
     if not 1 <= cfg.survivors < cfg.population:

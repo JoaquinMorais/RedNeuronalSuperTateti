@@ -9,5 +9,7 @@ __pycache__/
 !/models/model.pth
 !/models/model_easy.pth
 /data/
-/trainPuzzles/checkpoints/runs/**/*.pth
-/trainPuzzles/checkpoints/legacy/**/*.pth
+/trainPuzzles/checkpoints_mts/runs/**/*.pth
+/trainPuzzles/checkpoints_mts/legacy/**/*.pth
+/trainPuzzles/checkpoint_cnn/runs/**/*.pth
+/trainPuzzles/checkpoint_cnn/legacy/**/*.pth

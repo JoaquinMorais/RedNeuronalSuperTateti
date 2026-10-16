@@ -38,19 +38,23 @@ from .evo_config import EvoConfig, load_config, policy_tuple, save_config, valid
 from .puzzles import Puzzle, harvest
 
 # Capas cuyos desvíos se usan como referencia para detectar explosión de pesos.
-_REF_LAYERS = [("shared.0", 100), ("shared.2", 256), ("shared.4", 256), ("policy_head", 128)]
+# `fan_in` es la dimensión de entrada: para convoluciones incluye el área del kernel.
+_REF_LAYERS = {
+    "mlp": [("shared.0", 100), ("shared.2", 256), ("shared.4", 256), ("policy_head", 128)],
+    "cnn": [("conv1", 3 * 3 * 3), ("conv2", 48 * 3 * 3), ("conv3", 96 * 3 * 3), ("policy_head", 96)],
+}
 
 
 # ----------------------------------------------------------------------
 # Mutación de pesos (propia, autocontenida)
 # ----------------------------------------------------------------------
 def _is_mutable(name: str, mutate_value_head: bool) -> bool:
-    if name.startswith("value_head.") and not mutate_value_head:
+    if name.startswith("value") and not mutate_value_head:
         return False
     return True
 
 
-def normalize_state_dict(sd: dict, threshold: float = 4.0) -> tuple[dict, bool]:
+def normalize_state_dict(sd: dict, threshold: float = 4.0, arch: str = "mlp") -> tuple[dict, bool]:
     """Reescala todas las capas si algún linaje hizo crecer sus pesos de más.
 
     Una ReLU es homogénea positiva: escalar los pesos de una capa y compensar en la
@@ -60,16 +64,20 @@ def normalize_state_dict(sd: dict, threshold: float = 4.0) -> tuple[dict, bool]:
     """
     if threshold <= 0:
         return sd, False
+    ref_layers = [(n, fan_in) for n, fan_in in _REF_LAYERS.get(arch, _REF_LAYERS["mlp"])
+                  if f"{n}.weight" in sd]
+    if not ref_layers:
+        return sd, False
     d = {k: (torch.nan_to_num(v.detach().double(), nan=0.0, posinf=0.0, neginf=0.0)
              if torch.is_floating_point(v) else v) for k, v in sd.items()}
-    stds = {n: float(d[f"{n}.weight"].std()) for n, _ in _REF_LAYERS}
-    refs = {n: 1.0 / (fan_in ** 0.5) for n, fan_in in _REF_LAYERS}
+    stds = {n: float(d[f"{n}.weight"].std()) for n, _ in ref_layers}
+    refs = {n: 1.0 / (fan_in ** 0.5) for n, fan_in in ref_layers}
     broken = any(not torch.isfinite(v).all() for v in sd.values() if torch.is_floating_point(v))
-    if not broken and max(stds[n] / refs[n] for n, _ in _REF_LAYERS) <= threshold:
+    if not broken and max(stds[n] / refs[n] for n, _ in ref_layers) <= threshold:
         return sd, False
     out = dict(d)
     scale = 1.0
-    for n, _ in _REF_LAYERS:
+    for n, _ in ref_layers:
         m = refs[n] / max(stds[n], 1e-300)
         scale *= m
         out[f"{n}.weight"] = d[f"{n}.weight"] * m
@@ -78,9 +86,9 @@ def normalize_state_dict(sd: dict, threshold: float = 4.0) -> tuple[dict, bool]:
 
 
 def mutate_state_dict(parent: dict, level, seed: int, mutate_value_head: bool = False,
-                      norm_threshold: float = 0.0) -> dict:
+                      norm_threshold: float = 0.0, arch: str = "mlp") -> dict:
     """Copia INDEPENDIENTE del padre con mutación gaussiana (el padre no se toca)."""
-    parent, _ = normalize_state_dict(parent, norm_threshold)
+    parent, _ = normalize_state_dict(parent, norm_threshold, arch=arch)
     gen = torch.Generator().manual_seed(seed)
     child = {k: v.detach().clone() for k, v in parent.items()}
     for name in sorted(child):
@@ -126,7 +134,8 @@ def initial_population(cfg: EvoConfig, seed_sd: dict, rng: random.Random) -> lis
         child = mutate_state_dict(seed_sd, cfg.mutation_levels[lvl_name],
                                   seed=rng.randrange(1 << 31),
                                   mutate_value_head=cfg.mutate_value_head,
-                                  norm_threshold=cfg.mutation_norm_threshold)
+                                  norm_threshold=cfg.mutation_norm_threshold,
+                                  arch=cfg.arch)
         pop.append(Individual(sd=child, id=i, parent=0, gen=0, level=lvl_name))
     return pop
 
@@ -235,11 +244,11 @@ def local_search(sd: dict, cfg: EvoConfig, pool: list[Puzzle], stop_sets: dict,
     sobre el set de selección, no sobre este.
     """
     if cfg.epochs_per_gen <= 0 or not pool:
-        net = SuperTatetiNet()
+        net = T.build_net(cfg.arch)
         net.load_state_dict(sd)
         return sd, fitness_of(net, stop_sets, cfg.levels), 0
 
-    net = SuperTatetiNet()
+    net = T.build_net(cfg.arch)
     net.load_state_dict(sd)
     best_sd = {k: v.detach().clone() for k, v in sd.items()}
     best_acc = fitness_of(net, stop_sets, cfg.levels)
@@ -288,7 +297,8 @@ def next_generation(ranked: list[Individual], cfg: EvoConfig, gen: int,
         child_sd = mutate_state_dict(surv.sd, cfg.mutation_levels[lvl_name],
                                      seed=rng.randrange(1 << 31),
                                      mutate_value_head=cfg.mutate_value_head,
-                                     norm_threshold=cfg.mutation_norm_threshold)
+                                     norm_threshold=cfg.mutation_norm_threshold,
+                                     arch=cfg.arch)
         nxt.append(Individual(sd=child_sd, id=next_id, parent=surv.id, gen=gen, level=lvl_name))
         next_id += 1
     return nxt
@@ -355,7 +365,8 @@ def run(cfg: EvoConfig) -> int:
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
 
-    out = Path(cfg.out)
+    out = Path(cfg.out) if cfg.out else layout.default_canon(cfg.arch)
+    cfg.out = out
     canon_pth, canon_report = layout.canon_paths(out)
     run_dir = layout.next_run_dir(out, cfg.run_name)
     run_pth, run_report, _ = layout.run_paths(run_dir, cfg.run_name)
@@ -372,7 +383,7 @@ def run(cfg: EvoConfig) -> int:
 
         Con `--no-canon` el canon no se pisa, aunque `--out` apunte a él.
         """
-        net = _net_from(sd)
+        net = _net_from(sd, cfg.arch)
         dests = [out, run_pth]
         if no_canon:
             dests = [d for d in dests if d != canon_pth]
@@ -391,7 +402,7 @@ def run(cfg: EvoConfig) -> int:
         write_report(report, run_report, announce=False)
 
     T.log_phase("[INFO]", "Configuración evolutiva:")
-    T.log_phase("[INFO]", f"  semilla={cfg.seed_model}  out={out}  corrida={run_dir}  "
+    T.log_phase("[INFO]", f"  arch={cfg.arch}  semilla={cfg.seed_model}  out={out}  corrida={run_dir}  "
                f"canon={'off' if no_canon else canon_pth}  reporte={report_path}")
     T.log_phase("[INFO]", f"  población={cfg.population}  supervivientes={cfg.survivors}  "
                f"hijos={cfg.children}  generaciones={cfg.generations}")
@@ -437,7 +448,7 @@ def run(cfg: EvoConfig) -> int:
                 break
             sd, _, ep = local_search(ind.sd, cfg, pool, stop_set, rng)
             ind.sd = sd
-            ind.fitness = fitness_of(_net_from(sd), gen_eval, cfg.levels)
+            ind.fitness = fitness_of(_net_from(sd, cfg.arch), gen_eval, cfg.levels)
             T.log_phase("[TRAIN]", f"  gen {gen} | id {ind.id:3d} | padre {str(ind.parent):>4} | "
                        f"mut {ind.level:<6} | acierto {ind.fitness * 100:5.1f}% | +{ep} ep")
 
@@ -458,20 +469,20 @@ def run(cfg: EvoConfig) -> int:
 
         champ_test = None
         if gen % cfg.test_every == 0 and testset:
-            test_accs[gen] = fitness_of(_net_from(best["sd"]), testset, cfg.levels)
+            test_accs[gen] = fitness_of(_net_from(best["sd"], cfg.arch), testset, cfg.levels)
             T.log_phase("[EVO]", f"  test fresco del mejor HISTÓRICO gen {gen}: {test_accs[gen] * 100:.1f}% "
                        f"(validación rotativa {best['fitness'] * 100:.1f}%; es siempre el mismo modelo "
                        f"hasta que aparezca uno mejor)")
-            champ_test = fitness_of(_net_from(champ.sd), testset, cfg.levels)
+            champ_test = fitness_of(_net_from(champ.sd, cfg.arch), testset, cfg.levels)
             T.log_phase("[EVO]", f"  test fresco del CAMPEÓN de esta gen: {champ_test * 100:.1f}% "
                        f"(brecha contra su validación: {(champ.fitness - champ_test) * 100:+.1f})")
             if test_accs[gen] > best_test_seen + 1e-9:
                 best_test_seen = test_accs[gen]
                 best_test = {"fitness": test_accs[gen], "gen": gen, "id": best["id"],
                              "sd": best["sd"]}
-                T.save_net(_net_from(best_test["sd"]), run_dir / "best_test.pth")
+                T.save_net(_net_from(best_test["sd"], cfg.arch), run_dir / "best_test.pth")
                 if cfg.out_test is not None:
-                    T.save_net(_net_from(best_test["sd"]), Path(cfg.out_test))
+                    T.save_net(_net_from(best_test["sd"], cfg.arch), Path(cfg.out_test))
                 gens_since_test_improved = 0
             else:
                 gens_since_test_improved += 1
@@ -505,8 +516,8 @@ def run(cfg: EvoConfig) -> int:
     return 0
 
 
-def _net_from(sd: dict) -> SuperTatetiNet:
-    net = SuperTatetiNet()
+def _net_from(sd: dict, arch: str = "mlp") -> SuperTatetiNet:
+    net = T.build_net(arch)
     net.load_state_dict(sd)
     return net
 
@@ -543,14 +554,17 @@ def parse_args(argv: list[str] | None = None) -> EvoConfig:
         prog="python -m trainPuzzles.evolve_puzzles",
         description="Entrena SuperTatetiNet con un ciclo evolutivo memético sobre puzzles de mate en N.")
     p.add_argument("--config", default=None, help="JSON de configuración (los demás flags lo sobrescriben)")
+    p.add_argument("--arch", choices=("mlp", "cnn"), default=argparse.SUPPRESS,
+                   help="arquitectura: 'mlp' (SuperTatetiNet, checkpoints_mts) o "
+                        "'cnn' (SuperTatetiCNN, checkpoint_cnn)")
     p.add_argument("--seed-model", dest="seed_model", default=argparse.SUPPRESS)
     p.add_argument("--out", default=argparse.SUPPRESS)
     p.add_argument("--out-test", dest="out_test", default=argparse.SUPPRESS)
     p.add_argument("--report", default=argparse.SUPPRESS)
     p.add_argument("--run-name", dest="run_name", default=argparse.SUPPRESS,
-                   help="etiqueta de la corrida archivada en checkpoints/runs/ (default: evo)")
+                   help="etiqueta de la corrida archivada en <dir>/runs/ (default: evo)")
     p.add_argument("--no-canon", dest="no_canon", action="store_true", default=argparse.SUPPRESS,
-                   help="no copiar el mejor a puzzle_canon.pth (experimentos que no deben pisar la cadena)")
+                   help="no copiar el mejor a <dir>/puzzle_canon.pth (experimentos que no deben pisar la cadena)")
     p.add_argument("--population", type=int, default=argparse.SUPPRESS)
     p.add_argument("--survivors", type=int, default=argparse.SUPPRESS)
     p.add_argument("--generations", type=int, default=argparse.SUPPRESS)

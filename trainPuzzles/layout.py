@@ -7,6 +7,9 @@ Reglas:
   que un entrenamiento nuevo reanude desde ahí (handoff).
 * Cada corrida archiva sus artefactos en ``<checkpoints>/runs/NNNN_<tag>/``:
   el modelo final, su reporte y el mejor estado por nivel en ``levels/``.
+* El directorio raíz depende de la arquitectura (``--arch``): MLP usa
+  ``trainPuzzles/checkpoints_mts`` y CNN usa ``trainPuzzles/checkpoint_cnn``, de modo
+  que ambos handoffs no se pisan.
 
 No depende de ``evolution/`` ni de ningún otro módulo del repo.
 """
@@ -21,7 +24,20 @@ CANON_REPORT = f"{CANON_STEM}_report.json"
 RUNS_DIRNAME = "runs"
 LEVELS_DIRNAME = "levels"
 
+ARCH_DIRS = {"mlp": "checkpoints_mts", "cnn": "checkpoint_cnn"}
+ARCH_ROOT = Path("trainPuzzles")
+
 _RUN_RE = re.compile(r"^(\d+)_")
+
+
+def default_dir(arch: str = "mlp") -> Path:
+    """Directorio raíz de checkpoints de la arquitectura (``mlp``/``cnn``)."""
+    return ARCH_ROOT / ARCH_DIRS.get(arch, ARCH_DIRS["mlp"])
+
+
+def default_canon(arch: str = "mlp") -> Path:
+    """Ruta del canon por defecto (``<dir de la arquitectura>/puzzle_canon.pth``)."""
+    return default_dir(arch) / CANON_PTH
 
 
 def sanitize_tag(name: str | None) -> str:

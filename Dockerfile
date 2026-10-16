@@ -5,10 +5,16 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     MODELS_DIR=/app/models
 
+# Versión e índice de PyTorch parametrizables:
+#   * CPU (default): wheels +cpu, portables y livianas -> Linux/CI.
+#   * GPU (Windows con RTX): pasar --build-arg TORCH_INDEX_URL=.../cu128
+#     (ver docker-compose.gpu.yml). La red es diminuta.
+ARG TORCH_VERSION=2.8.0
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
 WORKDIR /app
 
-# PyTorch solo CPU (la red es diminuta; no hace falta GPU ni ventana gráfica)
-RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install "torch==${TORCH_VERSION}" --index-url "${TORCH_INDEX_URL}"
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 

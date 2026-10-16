@@ -1,0 +1,19 @@
+# Override para entrenar con GPU NVIDIA (Windows con Docker Desktop + WSL2).
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml build trainer
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml run --rm --no-deps trainer \
+#     python -m trainPuzzles --device cuda ...
+#
+# Requiere Docker Compose v2.30+ (soporte de `gpus`). Verificá la GPU con:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml run --rm --no-deps \
+#     trainer python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+services:
+  trainer:
+    image: supertateti-trainer:cu128
+    build:
+      context: .
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
+        TORCH_VERSION: "2.8.0"
+    gpus: all

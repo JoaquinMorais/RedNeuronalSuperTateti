@@ -1,9 +1,10 @@
 # trainPuzzles — entrenamiento táctico "mate en N"
 
-Método **independiente** para entrenar `SuperTatetiNet` con puzzles tácticos.
-Todo vive en esta carpeta: **no modifica ni depende de** `mcts.py`, `trainer.py`,
-`evolution/`, el `Dockerfile` ni `docker-compose.yml`. El modelo entrenado se
-guarda dentro de `trainPuzzles/` (por defecto en `checkpoints/`).
+Método **independiente** para entrenar `SuperTatetiNet` (MLP) o `SuperTatetiCNN` con
+puzzles tácticos. Todo vive en esta carpeta: **no modifica ni depende de** `mcts.py`,
+`trainer.py`, `evolution/`, el `Dockerfile` ni `docker-compose.yml`. El modelo entrenado
+se guarda dentro de `trainPuzzles/` (por defecto `checkpoints_mts/` para `--arch mlp` y
+`checkpoint_cnn/` para `--arch cnn`).
 
 ## Idea
 
@@ -56,10 +57,12 @@ docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
 - `-v ./model.pth:/app/model.pth:ro` provee la red de partida (ajustá la ruta a tu
   `.pth`; si no existe, arranca de una red aleatoria).
 - **Ordenamiento de checkpoints** (ver `layout.py`): cada corrida archiva sus
-  artefactos en `checkpoints/runs/NNNN_<run-name>/` (modelo final + reporte +
+  artefactos en `<dir>/runs/NNNN_<run-name>/` (modelo final + reporte +
   `levels/levelN_best.pth`). Además, el modelo final **siempre** se copia a
-  `checkpoints/puzzle_canon.pth` (con su `puzzle_canon_report.json`), que es el
-  punto de partida por defecto (`--init`) del próximo entrenamiento.
+  `<dir>/puzzle_canon.pth` (con su `puzzle_canon_report.json`), que es el punto de
+  partida por defecto (`--init`) del próximo entrenamiento. `<dir>` depende de
+  `--arch`: `trainPuzzles/checkpoints_mts` (`mlp`) o `trainPuzzles/checkpoint_cnn`
+  (`cnn`), de modo que los dos handoffs no se pisan.
 - Si querés omitir la copia al canon (p. ej. en un experimento A/B que no debe
   pisar la cadena), pasá `--no-canon`.
 
@@ -89,9 +92,10 @@ python -m trainPuzzles --levels 4 --threshold 0.9 --init model.pth
 
 | Opción | Default | Qué hace |
 |---|---|---|
-| `--init` | `trainPuzzles/checkpoints/puzzle_canon.pth` | `.pth` de partida (el canon: el último modelo terminado); si no existe, red aleatoria. |
-| `--out` | `trainPuzzles/checkpoints/puzzle_canon.pth` | `.pth` final (por defecto el canon). Además se archiva en `checkpoints/runs/NNNN_<run-name>/`. |
-| `--run-name` | `puzzle` | Etiqueta de la corrida archivada en `checkpoints/runs/`. |
+| `--arch` | `mlp` | Arquitectura: `mlp` (`SuperTatetiNet`, carpeta `checkpoints_mts/`) o `cnn` (`SuperTatetiCNN`, carpeta `checkpoint_cnn/`). Define el directorio por defecto de `--init`/`--out`. |
+| `--init` | canon del arch (`checkpoints_mts/puzzle_canon.pth` o `checkpoint_cnn/puzzle_canon.pth`) | `.pth` de partida (el canon: el último modelo terminado); si no existe, red aleatoria. |
+| `--out` | canon del arch | `.pth` final (por defecto el canon). Además se archiva en `<dir>/runs/NNNN_<run-name>/`. |
+| `--run-name` | `puzzle` | Etiqueta de la corrida archivada en `<dir>/runs/`. |
 | `--no-canon` | off | No copiar el modelo final a `puzzle_canon.pth` (para experimentos que no deben pisar la cadena). |
 | `--report` | `<out>_report.json` | Reporte JSON del aprendizaje (por defecto `puzzle_canon_report.json`). |
 | `--levels` | `4` | Niveles iniciales pre-generados (`1..N`). La **evaluación** se genera para `1..N` (barata) y el **entrenamiento** solo desde `--start-level..N`. |
@@ -203,7 +207,7 @@ uno y nunca corta solo: lo pará cuando quieras.
 docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
   -v ./trainPuzzles:/app/trainPuzzles \
   trainer python -m trainPuzzles --levels 4 --max-level 0 --threshold 0.95 \
-          --init trainPuzzles/checkpoints/puzzle_canon.pth
+          --init trainPuzzles/checkpoints_mts/puzzle_canon.pth
 ```
 
 Si no pasás `--init`, arranca directamente del canon (`puzzle_canon.pth`); cada
@@ -247,9 +251,10 @@ se conserva diversidad y se frena el sobreajuste.
 - **Diversidad**: al menos `--min-large-frac` de los hijos usan mutación `large`
   (inmigración) para frenar el colapso de linajes.
 - El **mejor histórico por validación** se guarda en `<out>` (por defecto el canon
-  `puzzle_canon.pth`); el **mejor por test honesto** (si se define `--out-test`) en
-  otro archivo, y hay un reporte JSON incremental con diversidad y ambos mejores.
-- Cada corrida archiva su modelo/reporte en `checkpoints/runs/NNNN_<run-name>/`
+  `puzzle_canon.pth` de la arquitectura); el **mejor por test honesto** (si se define
+  `--out-test`) en otro archivo, y hay un reporte JSON incremental con diversidad y
+  ambos mejores.
+- Cada corrida archiva su modelo/reporte en `<dir>/runs/NNNN_<run-name>/`
   (`best_test.pth` si hay `--out-test`). Con `--no-canon` no pisa `puzzle_canon.pth`.
 - `--patience` corta la corrida si el test honesto no mejora en N generaciones.
 
@@ -272,10 +277,11 @@ docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
 | Opción | Default | Qué hace |
 |---|---|---|
 | `--config` | — | JSON de configuración (los demás flags lo sobrescriben). |
+| `--arch` | `mlp` | Arquitectura: `mlp` (carpeta `checkpoints_mts/`) o `cnn` (`checkpoint_cnn/`). El `--seed-model` debe ser del mismo arch. |
 | `--seed-model` | `trainPuzzles/my_model.pth` | `.pth` semilla de toda la población. |
-| `--out` | `trainPuzzles/checkpoints/puzzle_canon.pth` | Mejor histórico por validación (el canon; se actualiza al mejorar). |
+| `--out` | canon del arch | Mejor histórico por validación (el canon; se actualiza al mejorar). |
 | `--out-test` | — (off) | Checkpoint del mejor **test honesto** (diagnóstico, no usado para seleccionar). Se archiva en `runs/.../best_test.pth`. |
-| `--run-name` | `evo` | Etiqueta de la corrida archivada en `checkpoints/runs/`. |
+| `--run-name` | `evo` | Etiqueta de la corrida archivada en `<dir>/runs/`. |
 | `--no-canon` | off | No copiar el mejor a `puzzle_canon.pth`. |
 | `--report` | `<out>_report.json` | Reporte JSON (generaciones, top, diversidad, linaje, test). |
 | `--population` | `30` | Tamaño de la población. |
@@ -312,12 +318,13 @@ generación actual y dejan el mejor modelo y el reporte.
 
 - Los `.pth` son `state_dict` planos de `SuperTatetiNet`: se cargan con
   `play.py` y con `evolution.modelstore.load_net`.
-- El layout de archivos vive en `layout.py`:
-  - `checkpoints/puzzle_canon.pth` + `puzzle_canon_report.json`: **el último modelo
+- El layout de archivos vive en `layout.py`. El directorio raíz `<dir>` depende de
+  `--arch`: `checkpoints_mts/` (`mlp`) o `checkpoint_cnn/` (`cnn`).
+  - `<dir>/puzzle_canon.pth` + `puzzle_canon_report.json`: **el último modelo
     terminado** (handoff; `--init`/`--out` por defecto).
-  - `checkpoints/runs/NNNN_<run-name>/`: modelo final, reporte y
+  - `<dir>/runs/NNNN_<run-name>/`: modelo final, reporte y
     `levels/levelN_best.pth` (mejor checkpoint por nivel).
-  - `checkpoints/legacy/`: corridas viejas con el naming plano anterior.
+  - `<dir>/legacy/`: corridas viejas con el naming plano anterior.
 
 ## A/B de regularización
 
@@ -332,8 +339,8 @@ docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
   python -m trainPuzzles --levels 1 --max-level 2 --threshold 0.90 \
     --games-budget 0 --max-games 50000 --puzzles-per-level 10000 \
     --plateau-stop 1500 --seed 0 --eval-seed 0 --no-canon --run-name ab_control \
-    --init trainPuzzles/checkpoints/puzzle_canon.pth \
-    --out  trainPuzzles/checkpoints/ab_control.pth
+    --init trainPuzzles/checkpoints_mts/puzzle_canon.pth \
+    --out  trainPuzzles/checkpoints_mts/ab_control.pth
 
 # Tratamiento (dropout + weight decay)
 docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
@@ -342,12 +349,12 @@ docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
     --games-budget 0 --max-games 50000 --puzzles-per-level 10000 \
     --plateau-stop 1500 --seed 0 --eval-seed 0 --no-canon --run-name ab_dropout \
     --dropout 0.2 --weight-decay 1e-4 \
-    --init trainPuzzles/checkpoints/puzzle_canon.pth \
-    --out  trainPuzzles/checkpoints/ab_dropout.pth
+    --init trainPuzzles/checkpoints_mts/puzzle_canon.pth \
+    --out  trainPuzzles/checkpoints_mts/ab_dropout.pth
 ```
 
 Comparar en mate-2 el `best`/`final` del `ab_control_report.json` vs `ab_dropout_report.json`
-dentro de `checkpoints/runs/` (generaliza mejor el que tenga mayor acierto de evaluación con
+dentro de `<dir>/runs/` (generaliza mejor el que tenga mayor acierto de evaluación con
 menor brecha train/eval).
 
 ## Reintento automático con más datos
@@ -361,11 +368,12 @@ setsid bash trainPuzzles/retrain_loop.sh > /tmp/opencode/retrain.log 2>&1 < /dev
 
 Parámetros por variable de entorno: `TARGET_LEVEL` (2), `ROUNDS` (5), `PPL` (25000),
 `PPL_STEP` (25000), `PLATEAU` (1500), `SEED`, `EVAL_SEED`, `DROPOUT` (0.2),
-`WEIGHT_DECAY` (1e-4), `WARM_START` (1), `START_LEVEL` (1). Cada ronda corre con
-`--stop-at-level $TARGET_LEVEL` y se archiva en `checkpoints/runs/NNNN_retryN/` y
-actualiza `puzzle_canon.pth` (+ `puzzle_canon_report.json`); el loop lee ese reporte y
-corta cuando `TARGET_LEVEL` queda `mastered`. Con `START_LEVEL=2` (mate-1 ya dominado)
-la ronda **arranca directo en mate-2** calentando desde el canon, sin reentrenar mate-1.
+`WEIGHT_DECAY` (1e-4), `WARM_START` (1), `START_LEVEL` (1), `ARCH` (mlp). Cada ronda corre con
+`--stop-at-level $TARGET_LEVEL` y se archiva en `<OUTDIR>/runs/NNNN_retryN/` y
+actualiza `<OUTDIR>/puzzle_canon.pth` (+ `puzzle_canon_report.json`); el loop lee ese reporte y
+corta cuando `TARGET_LEVEL` queda `mastered`. `OUTDIR`/`CANON_INIT` se derivan del `ARCH` por
+defecto (`checkpoints_mts` para mlp, `checkpoint_cnn` para cnn). Con `START_LEVEL=2` (mate-1 ya
+dominado) la ronda **arranca directo en mate-2** calentando desde el canon, sin reentrenar mate-1.
 
 ### Técnicas de refuerzo (para exprimir el top-1)
 
@@ -414,15 +422,18 @@ trainPuzzles/
 ├── puzzles.py         # oráculo min_mate/optimal_moves + generador
 ├── canon.py           # entrada canónica (perspectiva de quien mueve) + simetrías D4
 ├── layout.py          # ordenamiento de checkpoints (canon + runs/NNNN_<tag>)
-├── train.py           # entrenador de gradiente + CLI
+├── train.py           # entrenador de gradiente + CLI (--arch mlp|cnn)
+├── model_cnn.py       # SuperTatetiCNN (--arch cnn)
 ├── evo_config.py      # configuración del evolutivo (propia, sin evolution/)
 ├── evolve_puzzles.py  # entrenador evolutivo memético (python -m trainPuzzles.evolve_puzzles)
-├── checkpoints/       # canon + runs/NNNN_<tag>/ + legacy/ (los .pth ignorados por git)
+├── checkpoints_mts/   # canon + runs/NNNN_<tag>/ + legacy/ del MLP (los .pth ignorados por git)
+├── checkpoint_cnn/    # canon + runs/NNNN_<tag>/ + legacy/ del CNN (los .pth ignorados por git)
 ├── tests/
 │   ├── test_puzzles.py
 │   ├── test_canon.py
 │   ├── test_train.py
-│   └── test_evolve.py
+│   ├── test_evolve.py
+│   └── test_model_cnn.py
 └── README.md
 ```
 
@@ -434,4 +445,5 @@ trainPuzzles/
 - Un nivel se entrena **hasta dominarlo** (umbral + paciencia + min-epochs). Si
   querés cortar antes, poné `--max-epochs`; al alcanzarlo sin dominar se detiene el
   currículo. `Ctrl-C`/`docker stop` guarda el mejor estado parcial y el resumen.
-- Los `.pth` de `checkpoints/` están en el `.gitignore` local de esta carpeta.
+- Los `.pth` de las subcarpetas `runs/` y `legacy/` de `checkpoints_mts/` y
+  `checkpoint_cnn/` están en el `.gitignore` de la raíz; el canon `.pth` sí se versiona.
