@@ -8,7 +8,7 @@ import torch
 from evolution import additions, engine, modelstore, mutation
 from evolution.config import DEFAULT_LEVEL_PROBS, DEFAULT_MUTATION_LEVELS, load_config
 from game import SuperTateti
-from model import SuperTatetiNet
+from model import SuperTatetiNet, hidden_from_state_dict
 from tests.helpers import ROOT, TEST_URL, Env
 
 BASE = modelstore.load_state_dict(ROOT / "model.pth")
@@ -16,7 +16,14 @@ LEVELS = DEFAULT_MUTATION_LEVELS
 
 
 def _net(sd=None, double=False):
-    n = SuperTatetiNet().eval()
+    if sd is not None:
+        try:
+            n = SuperTatetiNet(hidden=hidden_from_state_dict(sd))
+        except ValueError:
+            n = SuperTatetiNet()
+    else:
+        n = SuperTatetiNet()
+    n = n.eval()
     if sd is not None:
         n.load_state_dict(sd)
     if double:
@@ -162,7 +169,7 @@ def test_padre_con_pesos_no_finitos_se_sanea():
 # ====================== linajes largos ======================
 def _chain(threshold, gens, seed=0):
     rng, sd = random.Random(seed), BASE
-    net = _net()
+    net = _net(sd)
     g0 = SuperTateti()
     st, mk = torch.from_numpy(g0.get_state()).unsqueeze(0), torch.from_numpy(g0.get_valid_moves()).unsqueeze(0)
     for gen in range(1, gens + 1):

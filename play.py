@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from game import SuperTateti
-from model import SuperTatetiNet
+from model import SuperTatetiNet, hidden_from_state_dict
 from mcts import MCTS
 
 def print_board(game):
@@ -97,14 +97,27 @@ def get_human_move(game):
             print("Ingresá números entre 0 y 8")
 
 def play(model = "model.pth"):
-    # Cargar modelo
-    net = SuperTatetiNet()
+    # Cargar modelo (la forma real se infiere del checkpoint, así no depende del default)
     try:
-        net.load_state_dict(torch.load(model, weights_only=True))
-        net.eval()
-        print("Modelo cargado correctamente")
-    except FileNotFoundError:
+        state = torch.load(model, weights_only=True, map_location="cpu")
+    except (FileNotFoundError, OSError):
+        state = None
+
+    if state is None:
+        net = SuperTatetiNet()
         print("No se encontró model.pth, usando red sin entrenar")
+    else:
+        try:
+            net = SuperTatetiNet(hidden=hidden_from_state_dict(state))
+        except ValueError:
+            net = SuperTatetiNet()
+        try:
+            net.load_state_dict(state)
+            net.eval()
+            print("Modelo cargado correctamente")
+        except RuntimeError:
+            net = SuperTatetiNet()
+            print("El modelo no coincide con la arquitectura, usando red sin entrenar")
     
     mcts = MCTS(net, simulations=50)
     

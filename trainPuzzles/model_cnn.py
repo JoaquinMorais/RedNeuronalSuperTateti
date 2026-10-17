@@ -31,12 +31,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from model import _canonicalize
+from architecture import CNN_CHANNELS, CNN_KERNEL_SIZE
 
 ARCHITECTURE_NAME = "SuperTatetiCNN"
 
-# Canales del cuerpo convolucional ("Media": ~132k params, comparable al MLP de ~143k).
-# Para subir capacidad, p. ej. (64, 128, 128) (~240k).
-DEFAULT_CHANNELS = (48, 96, 96)
+# Canales del cuerpo convolucional (fuente única: `architecture.CNN_CHANNELS`).
+# Para subir capacidad, editar `architecture.py` (p. ej. (64, 128, 128) ~240k).
+DEFAULT_CHANNELS = CNN_CHANNELS
 IN_CHANNELS = 3  # ch0 tablero (con signo), ch1 small_boards, ch2 active_board
 
 
@@ -59,9 +60,9 @@ class SuperTatetiCNN(nn.Module):
 
         c1, c2, c3 = channels
 
-        self.conv1 = nn.Conv2d(IN_CHANNELS, c1, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(c1, c2, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(c2, c3, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(IN_CHANNELS, c1, kernel_size=CNN_KERNEL_SIZE, padding=1)
+        self.conv2 = nn.Conv2d(c1, c2, kernel_size=CNN_KERNEL_SIZE, padding=1)
+        self.conv3 = nn.Conv2d(c2, c3, kernel_size=CNN_KERNEL_SIZE, padding=1)
 
         # Política: 1 logit por casilla, alineado con la grilla 9x9.
         self.policy_head = nn.Conv2d(c3, 1, kernel_size=1)

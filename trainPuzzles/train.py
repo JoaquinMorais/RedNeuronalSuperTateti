@@ -45,24 +45,30 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from model import SuperTatetiNet
+from model import SuperTatetiNet, hidden_from_state_dict
+from architecture import MLP_HIDDEN
 
 from . import canon, layout
 from .model_cnn import SuperTatetiCNN
 from .puzzles import Puzzle, harvest
 
 
-def build_net(arch: str, dropout: float = 0.0):
+def build_net(arch: str, dropout: float = 0.0, mlp_hidden=None):
     """Factory de arquitecturas: 'mlp' (SuperTatetiNet) o 'cnn' (SuperTatetiCNN).
 
     Ambas comparten la firma ``forward(x, valid_moves_mask) -> (policy(81), value(1))``
     y un ``state_dict`` estándar. OJO: los checkpoints de una NO son compatibles con la
     otra (formas distintas), así que ``--init`` debe ser de la misma arquitectura.
+
+    ``mlp_hidden`` fija las dimensiones ocultas del MLP (default: ``architecture.MLP_HIDDEN``).
+    Se usa para reconstruir redes con un tamaño distinto del default (p. ej. checkpoints
+    viejos) al cargarlos, sin editar ``architecture.py``.
     """
     if arch == "cnn":
         return SuperTatetiCNN(dropout=dropout)
     if arch == "mlp":
-        return SuperTatetiNet(dropout=dropout)
+        hidden = MLP_HIDDEN if mlp_hidden is None else tuple(mlp_hidden)
+        return SuperTatetiNet(hidden=hidden, dropout=dropout)
     raise ValueError(f"arquitectura desconocida: {arch!r} (usar 'mlp' o 'cnn')")
 
 
@@ -457,9 +463,15 @@ def generate_train_set(n: int, args, exclude: set) -> list[Puzzle]:
 
 
 def load_net(init_path: Path, dropout: float = 0.0, arch: str = "mlp") -> SuperTatetiNet:
-    net = build_net(arch, dropout=dropout)
     if init_path.exists():
         state = torch.load(init_path, weights_only=True, map_location="cpu")
+        mlp_hidden = None
+        if arch == "mlp":
+            try:
+                mlp_hidden = hidden_from_state_dict(state)
+            except ValueError:
+                mlp_hidden = None
+        net = build_net(arch, dropout=dropout, mlp_hidden=mlp_hidden)
         try:
             net.load_state_dict(state)
             log_print(f"Red inicializada desde {init_path}")
@@ -467,7 +479,9 @@ def load_net(init_path: Path, dropout: float = 0.0, arch: str = "mlp") -> SuperT
             log_print(f"!! No se pudo inicializar {arch} desde {init_path} "
                       f"(arquitectura incompatible): se entrena desde una red aleatoria")
             log_print(f"   detalle: {exc}")
+            net = build_net(arch, dropout=dropout)
     else:
+        net = build_net(arch, dropout=dropout)
         log_print(f"No existe {init_path}: se entrena desde una red aleatoria")
     return net
 
@@ -877,7 +891,13 @@ def run(args) -> int:
     net.to(_DEVICE)
 
     initial_state = clone_state(net)
-    baseline_net = build_net(arch)
+    baseline_hidden = None
+    if arch == "mlp":
+        try:
+            baseline_hidden = hidden_from_state_dict(initial_state)
+        except ValueError:
+            baseline_hidden = None
+    baseline_net = build_net(arch, mlp_hidden=baseline_hidden)
     baseline_net.load_state_dict(initial_state)
     baseline_net.to(_DEVICE)
     baselines = {n: accuracy(baseline_net, eval_sets.get(n, []), tta=getattr(args, 'tta', False))

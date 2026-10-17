@@ -15,7 +15,7 @@ from pathlib import Path
 
 import torch
 
-from model import SuperTatetiNet
+from model import SuperTatetiNet, hidden_from_state_dict
 
 MODEL_FORMAT_VERSION = 1
 ARCHITECTURE_NAME = "SuperTatetiNet"
@@ -29,9 +29,14 @@ class ModelIntegrityError(RuntimeError):
     pass
 
 
-def architecture_signature() -> str:
-    """Hash de nombres y formas de los parámetros de la red actual."""
-    shapes = {k: list(v.shape) for k, v in SuperTatetiNet().state_dict().items()}
+def architecture_signature(state_dict: dict | None = None) -> str:
+    """Hash de nombres y formas de los parámetros de la red.
+
+    Sin argumento usa la red por defecto (``SuperTatetiNet()``); con un ``state_dict``
+    usa sus formas reales, de modo que la firma refleje el tamaño real del modelo.
+    """
+    sd = SuperTatetiNet().state_dict() if state_dict is None else state_dict
+    shapes = {k: list(v.shape) for k, v in sd.items()}
     return hashlib.sha256(json.dumps(shapes, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -65,7 +70,7 @@ def save_model(path: Path, state_dict: dict, meta: dict) -> str:
     info = {
         "format_version": MODEL_FORMAT_VERSION,
         "architecture": ARCHITECTURE_NAME,
-        "architecture_signature": architecture_signature(),
+        "architecture_signature": architecture_signature(state_dict),
         "weights_sha256": digest,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "torch_version": torch.__version__,
@@ -91,7 +96,12 @@ def load_state_dict(path: Path, expected_sha256: str | None = None) -> dict:
     """Carga los pesos verificando la arquitectura y (si se da) el hash esperado."""
     path = Path(path)
     sd = torch.load(path, weights_only=True, map_location="cpu")
-    reference = SuperTatetiNet().state_dict()
+    # Reconstruye la forma real desde el propio state_dict: así checkpoints de otros
+    # tamaños (p. ej. viejos 256-256-128) siguen cargando aunque cambie el default.
+    try:
+        reference = SuperTatetiNet(hidden=hidden_from_state_dict(sd)).state_dict()
+    except ValueError:
+        reference = SuperTatetiNet().state_dict()
     if set(sd) != set(reference) or any(sd[k].shape != reference[k].shape for k in reference):
         raise ModelIntegrityError(f"Arquitectura incompatible con SuperTatetiNet: {path}")
     if expected_sha256 is not None and weights_hash(sd) != expected_sha256:
@@ -100,8 +110,12 @@ def load_state_dict(path: Path, expected_sha256: str | None = None) -> dict:
 
 
 def load_net(path: Path, expected_sha256: str | None = None) -> SuperTatetiNet:
-    net = SuperTatetiNet()
-    net.load_state_dict(load_state_dict(path, expected_sha256))
+    sd = load_state_dict(path, expected_sha256)
+    try:
+        net = SuperTatetiNet(hidden=hidden_from_state_dict(sd))
+    except ValueError:
+        net = SuperTatetiNet()
+    net.load_state_dict(sd)
     net.eval()
     for p in net.parameters():
         p.requires_grad_(False)

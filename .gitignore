@@ -13,3 +13,5 @@ __pycache__/
 /trainPuzzles/checkpoints_mts/legacy/**/*.pth
 /trainPuzzles/checkpoint_cnn/runs/**/*.pth
 /trainPuzzles/checkpoint_cnn/legacy/**/*.pth
+/trainPuzzles/checkpoints_mlp_big/runs/**/*.pth
+/trainPuzzles/checkpoints_mlp_big/legacy/**/*.pth

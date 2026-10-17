@@ -30,19 +30,46 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from model import SuperTatetiNet
+from model import SuperTatetiNet, hidden_from_state_dict
 
 from . import layout
 from . import train as T
 from .evo_config import EvoConfig, load_config, policy_tuple, save_config, validate
 from .puzzles import Puzzle, harvest
 
+
 # Capas cuyos desvíos se usan como referencia para detectar explosión de pesos.
-# `fan_in` es la dimensión de entrada: para convoluciones incluye el área del kernel.
-_REF_LAYERS = {
-    "mlp": [("shared.0", 100), ("shared.2", 256), ("shared.4", 256), ("policy_head", 128)],
-    "cnn": [("conv1", 3 * 3 * 3), ("conv2", 48 * 3 * 3), ("conv3", 96 * 3 * 3), ("policy_head", 96)],
-}
+# Se derivan del propio state_dict (``_ref_layers``) para soportar cualquier ancho,
+# profundidad o arquitectura sin listas hardcodeadas.
+def _ref_layers(sd: dict) -> list[tuple[str, int]]:
+    """Capas de referencia ``(nombre, fan_in)`` derivadas del ``state_dict``.
+
+    Reconoce ``shared.*`` y ``policy_head`` (MLP), ``conv*`` y ``policy_head`` (CNN).
+    ``fan_in`` incluye el área del kernel en convoluciones.
+    """
+    out = []
+    for name in sorted(sd):
+        if not name.endswith(".weight"):
+            continue
+        prefix = name[:-len(".weight")]
+        if not (prefix.startswith("shared.") or prefix == "policy_head" or prefix.startswith("conv")):
+            continue
+        w = sd[name]
+        fan_in = int(w.shape[1])
+        if w.ndim == 4:
+            fan_in *= int(w.shape[2]) * int(w.shape[3])
+        out.append((prefix, fan_in))
+
+    def _order(item):
+        prefix = item[0]
+        if prefix.startswith("shared."):
+            return (0, int(prefix.split(".")[1]))
+        if prefix.startswith("conv"):
+            return (1, prefix)
+        return (2, prefix)
+
+    out.sort(key=_order)
+    return out
 
 
 # ----------------------------------------------------------------------
@@ -61,11 +88,13 @@ def normalize_state_dict(sd: dict, threshold: float = 4.0, arch: str = "mlp") ->
     siguiente deja la jugada idéntica. Si algún tensor de referencia supera
     ``threshold`` veces su desvío natural, TODAS las capas vuelven a su desvío
     natural. La cabeza de valor no se toca. ``threshold <= 0`` lo desactiva.
+
+    La lista de capas de referencia se infiere del propio ``state_dict`` (``arch`` se
+    conserva por compatibilidad de firma pero ya no se usa).
     """
     if threshold <= 0:
         return sd, False
-    ref_layers = [(n, fan_in) for n, fan_in in _REF_LAYERS.get(arch, _REF_LAYERS["mlp"])
-                  if f"{n}.weight" in sd]
+    ref_layers = _ref_layers(sd)
     if not ref_layers:
         return sd, False
     d = {k: (torch.nan_to_num(v.detach().double(), nan=0.0, posinf=0.0, neginf=0.0)
@@ -244,12 +273,10 @@ def local_search(sd: dict, cfg: EvoConfig, pool: list[Puzzle], stop_sets: dict,
     sobre el set de selección, no sobre este.
     """
     if cfg.epochs_per_gen <= 0 or not pool:
-        net = T.build_net(cfg.arch)
-        net.load_state_dict(sd)
+        net = _net_from(sd, cfg.arch)
         return sd, fitness_of(net, stop_sets, cfg.levels), 0
 
-    net = T.build_net(cfg.arch)
-    net.load_state_dict(sd)
+    net = _net_from(sd, cfg.arch)
     best_sd = {k: v.detach().clone() for k, v in sd.items()}
     best_acc = fitness_of(net, stop_sets, cfg.levels)
     best_ep = 0
@@ -517,7 +544,18 @@ def run(cfg: EvoConfig) -> int:
 
 
 def _net_from(sd: dict, arch: str = "mlp") -> SuperTatetiNet:
-    net = T.build_net(arch)
+    """Construye la red con la forma real del ``state_dict`` y carga sus pesos.
+
+    Para el MLP las dimensiones ocultas se infieren de ``sd`` (soporta anchos distintos
+    del default). Así los individuos de cualquier tamaño se reconstruyen correctamente.
+    """
+    mlp_hidden = None
+    if arch == "mlp":
+        try:
+            mlp_hidden = hidden_from_state_dict(sd)
+        except ValueError:
+            mlp_hidden = None
+    net = T.build_net(arch, mlp_hidden=mlp_hidden)
     net.load_state_dict(sd)
     return net
 

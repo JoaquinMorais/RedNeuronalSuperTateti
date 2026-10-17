@@ -16,8 +16,37 @@ def is_mutable(name: str, mutate_value_head: bool) -> bool:
     return True
 
 
-# Desvío "natural" de cada capa Linear con pesos 1/sqrt(fan_in) (cota de la inicialización de PyTorch).
-_REF_LAYERS = [("shared.0", 100), ("shared.2", 256), ("shared.4", 256), ("policy_head", 128)]
+def _ref_layers(sd: dict) -> list:
+    """Capas de referencia ``(nombre, fan_in)`` derivadas del propio ``state_dict``.
+
+    Reconoce las capas que influyen en la jugada: ``shared.*`` y ``policy_head`` (MLP),
+    ``conv*`` y ``policy_head`` (CNN). ``fan_in`` es la dimensión de entrada, incluyendo
+    el área del kernel en convoluciones. Así el reescalado funciona con cualquier ancho,
+    profundidad o arquitectura, sin listas hardcodeadas.
+    """
+    out = []
+    for name in sorted(sd):
+        if not name.endswith(".weight"):
+            continue
+        prefix = name[:-len(".weight")]
+        if not (prefix.startswith("shared.") or prefix == "policy_head" or prefix.startswith("conv")):
+            continue
+        w = sd[name]
+        fan_in = int(w.shape[1])
+        if w.ndim == 4:
+            fan_in *= int(w.shape[2]) * int(w.shape[3])
+        out.append((prefix, fan_in))
+
+    def _order(item):
+        prefix = item[0]
+        if prefix.startswith("shared."):
+            return (0, int(prefix.split(".")[1]))
+        if prefix.startswith("conv"):
+            return (1, prefix)
+        return (2, prefix)
+
+    out.sort(key=_order)
+    return out
 
 
 def normalize_state_dict(sd: dict, threshold: float = 4.0) -> tuple[dict, bool]:
@@ -32,16 +61,19 @@ def normalize_state_dict(sd: dict, threshold: float = 4.0) -> tuple[dict, bool]:
     Devuelve (nuevo_state_dict, ¿se reescaló?). ``threshold <= 0`` desactiva (comportamiento anterior)."""
     if threshold <= 0:
         return sd, False
+    ref_layers = _ref_layers(sd)
+    if not ref_layers:
+        return sd, False
     d = {k: torch.nan_to_num(v.detach().double(), nan=0.0, posinf=0.0, neginf=0.0) if torch.is_floating_point(v) else v
          for k, v in sd.items()}
-    stds = {n: float(d[f"{n}.weight"].std()) for n, _ in _REF_LAYERS}
-    refs = {n: 1.0 / (fan_in ** 0.5) for n, fan_in in _REF_LAYERS}
+    stds = {n: float(d[f"{n}.weight"].std()) for n, _ in ref_layers}
+    refs = {n: 1.0 / (fan_in ** 0.5) for n, fan_in in ref_layers}
     broken = any(not torch.isfinite(v).all() for v in sd.values() if torch.is_floating_point(v))
-    if not broken and max(stds[n] / refs[n] for n, _ in _REF_LAYERS) <= threshold:
+    if not broken and max(stds[n] / refs[n] for n, _ in ref_layers) <= threshold:
         return sd, False
     out = dict(d)
     scale = 1.0                                   # escala acumulada de la salida de cada capa
-    for n, _ in _REF_LAYERS:
+    for n, _ in ref_layers:
         m = refs[n] / max(stds[n], 1e-300)
         scale *= m
         out[f"{n}.weight"] = d[f"{n}.weight"] * m

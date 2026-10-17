@@ -2,6 +2,25 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from architecture import MLP_HIDDEN
+
+
+def hidden_from_state_dict(sd: dict) -> tuple:
+    """Deriva las dimensiones ocultas del MLP a partir de un ``state_dict``.
+
+    Lee, en orden, la ``out_features`` de cada capa Linear de ``shared`` (índices
+    pares: ``shared.0``, ``shared.2``, ...). Permite reconstruir la red con su tamaño
+    real al cargar un checkpoint, sin depender del default de ``architecture.py``.
+    """
+    dims = []
+    i = 0
+    while f"shared.{i}.weight" in sd:
+        dims.append(int(sd[f"shared.{i}.weight"].shape[0]))
+        i += 2
+    if not dims:
+        raise ValueError("state_dict sin capas 'shared.*': no se pudo inferir la arquitectura del MLP")
+    return tuple(dims)
+
 
 def _canonicalize(x: torch.Tensor) -> torch.Tensor:
     """Reescribe el estado desde la perspectiva de quien mueve (mis fichas = +1).
@@ -26,7 +45,7 @@ def _canonicalize(x: torch.Tensor) -> torch.Tensor:
 
 
 class SuperTatetiNet(nn.Module):
-    def __init__(self, dropout: float = 0.0):
+    def __init__(self, hidden=MLP_HIDDEN, dropout: float = 0.0):
         super().__init__()
 
         # Dropout de entrenamiento (0 = desactivado). Se aplica en `forward` de forma
@@ -35,22 +54,23 @@ class SuperTatetiNet(nn.Module):
         # firma de arquitectura de `evolution.modelstore`.
         self.dropout_p = float(dropout)
 
-        # Capas compartidas
-        self.shared = nn.Sequential(
-            nn.Linear(100, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-        )
-        
+        # Dimensiones de las capas ocultas (fuente única: `architecture.MLP_HIDDEN`).
+        self.hidden = tuple(int(h) for h in hidden)
+
+        # Capas compartidas: una Linear + ReLU por cada dimensión de `hidden`.
+        layers = []
+        prev = 100
+        for h in self.hidden:
+            layers += [nn.Linear(prev, h), nn.ReLU()]
+            prev = h
+        self.shared = nn.Sequential(*layers)
+
         # Rama de política
-        self.policy_head = nn.Linear(128, 81)
-        
+        self.policy_head = nn.Linear(prev, 81)
+
         # Rama de valor
         self.value_head = nn.Sequential(
-            nn.Linear(128, 64),
+            nn.Linear(prev, 64),
             nn.ReLU(),
             nn.Linear(64, 1),
             nn.Tanh(),

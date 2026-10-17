@@ -2,13 +2,17 @@ import torch
 import numpy as np
 
 from game import SuperTateti
-from model import SuperTatetiNet
+from model import SuperTatetiNet, hidden_from_state_dict
 from mcts import MCTS
 
 
 def load_ai(model_path, simulations=50):
-    net = SuperTatetiNet()
-    net.load_state_dict(torch.load(model_path, weights_only=True))
+    state = torch.load(model_path, weights_only=True)
+    try:
+        net = SuperTatetiNet(hidden=hidden_from_state_dict(state))
+    except ValueError:
+        net = SuperTatetiNet()
+    net.load_state_dict(state)
     net.eval()
 
     return MCTS(net, simulations=simulations)
